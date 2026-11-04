@@ -40,11 +40,11 @@ jobs:
         $ErrorActionPreference = 'Stop'
         if ($env:VERSION -notmatch '^v\d+\.\d+\.\d+$') { throw "Version muss das Format v1.2.3 haben" }
         if (-not (Test-Path .\catan3d.html)) { throw "catan3d.html nicht gefunden" }
-        if (-not (Test-Path .\icon.jpg)) { throw "icon.jpg nicht gefunden" }
+        if (-not (Test-Path .\icon.png)) { throw "icon.png nicht gefunden" }
 
         New-Item -ItemType Directory -Path .\app -Force | Out-Null
         Copy-Item .\catan3d.html .\app\catan3d.html
-        Copy-Item .\icon.jpg .\app\icon.jpg
+        Copy-Item .\icon.png .\app\icon.png
 
         @'
         {
@@ -56,11 +56,11 @@ jobs:
           "build": {
             "appId": "de.catan3d.app",
             "productName": "Catan3D",
-            "files": ["main.js", "catan3d.html", "icon.jpg"],
+            "files": ["main.js", "catan3d.html", "icon.png"],
             "directories": { "output": "dist" },
             "win": { 
               "target": "portable",
-              "icon": "icon.jpg"
+              "icon": "icon.png"
             },
             "portable": { "artifactName": "Catan3D.exe" }
           }
@@ -75,7 +75,7 @@ jobs:
             width: 1280, 
             height: 800, 
             autoHideMenuBar: true,
-            icon: path.join(__dirname, 'icon.jpg')
+            icon: path.join(__dirname, 'icon.png')
           });
           win.loadFile(path.join(__dirname, 'catan3d.html'));
         }
