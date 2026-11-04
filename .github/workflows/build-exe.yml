@@ -20,24 +20,38 @@ permissions:
 jobs:
   build:
     runs-on: windows-latest
+    env:
+      VERSION: ${{ inputs.version }}
+      RELEASE_NAME: ${{ inputs.release_name }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
-    - name: Checkout Code
-      uses: actions/checkout@v4
+    - uses: actions/checkout@v4
 
     - name: Download HTML2EXE CLI
-      # Lädt jetzt die korrekte ausführbare ZIP-Datei des Tools herunter
+      shell: pwsh
       run: |
-        curl -L -o html2exe.zip https://github.com
-        Expand-Archive -Path html2exe.zip -DestinationPath ./html2exe-cli
+        $ErrorActionPreference = 'Stop'
+        # HIER die echte Asset-URL eintragen:
+        Invoke-WebRequest -Uri "https://github.com/<owner>/<repo>/releases/download/<tag>/<datei>.zip" -OutFile html2exe.zip
+        Expand-Archive -Path html2exe.zip -DestinationPath .\html2exe-cli
 
     - name: Build Single EXE
-      # Packt die catan3d.html direkt in eine einzelne, lauffähige Catan3D.exe
+      shell: pwsh
       run: |
-        ./html2exe-cli/HTML2EXE.exe ./catan3d.html ./Catan3D.exe
+        $ErrorActionPreference = 'Stop'
+        $tool = Get-ChildItem .\html2exe-cli -Recurse -Filter HTML2EXE.exe | Select-Object -First 1
+        if (-not $tool) { throw "HTML2EXE.exe nicht gefunden" }
+        & $tool.FullName .\catan3d.html .\Catan3D.exe
+        if ($LASTEXITCODE -ne 0) { throw "Build fehlgeschlagen" }
+        if (-not (Test-Path .\Catan3D.exe)) { throw "Catan3D.exe wurde nicht erzeugt" }
 
-    - name: Create GitHub Release and Upload Single EXE
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    - name: Create GitHub Release
+      shell: pwsh
       run: |
-        gh release create ${{ github.event.inputs.version }} ./Catan3D.exe --title "${{ github.event.inputs.release_name }}" --notes "Automatischer Build von Catan3D als einzelne EXE. Version: ${{ github.event.inputs.version }}"
+        $ErrorActionPreference = 'Stop'
+        gh release create "$env:VERSION" .\Catan3D.exe `
+          --repo "${{ github.repository }}" `
+          --target "${{ github.sha }}" `
+          --title "$env:RELEASE_NAME" `
+          --notes "Automatischer Build von Catan3D. Version: $env:VERSION"
