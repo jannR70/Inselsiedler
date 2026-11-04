@@ -26,31 +26,71 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
-    - uses: actions/checkout@v4
+    - name: Checkout Code
+      uses: actions/checkout@v4
 
-    - name: Download HTML2EXE CLI
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: 20
+
+    - name: Prepare Electron app
       shell: pwsh
       run: |
         $ErrorActionPreference = 'Stop'
-        # HIER die echte Asset-URL eintragen:
-        Invoke-WebRequest -Uri "https://github.com/<owner>/<repo>/releases/download/<tag>/<datei>.zip" -OutFile html2exe.zip
-        Expand-Archive -Path html2exe.zip -DestinationPath .\html2exe-cli
+        if ($env:VERSION -notmatch '^v\d+\.\d+\.\d+$') { throw "Version muss das Format v1.2.3 haben" }
+        if (-not (Test-Path .\catan3d.html)) { throw "catan3d.html nicht gefunden" }
+
+        New-Item -ItemType Directory -Path .\app -Force | Out-Null
+        Copy-Item .\catan3d.html .\app\catan3d.html
+
+        @'
+        {
+          "name": "catan3d",
+          "version": "1.0.0",
+          "description": "Catan3D",
+          "author": "Catan3D",
+          "main": "main.js",
+          "build": {
+            "appId": "de.catan3d.app",
+            "productName": "Catan3D",
+            "files": ["main.js", "catan3d.html"],
+            "directories": { "output": "dist" },
+            "win": { "target": "portable" },
+            "portable": { "artifactName": "Catan3D.exe" }
+          }
+        }
+        '@ | Set-Content -Path .\app\package.json -Encoding utf8
+
+        @'
+        const { app, BrowserWindow } = require('electron');
+        const path = require('path');
+        function createWindow() {
+          const win = new BrowserWindow({ width: 1280, height: 800, autoHideMenuBar: true });
+          win.loadFile(path.join(__dirname, 'catan3d.html'));
+        }
+        app.whenReady().then(createWindow);
+        app.on('window-all-closed', () => app.quit());
+        '@ | Set-Content -Path .\app\main.js -Encoding utf8
 
     - name: Build Single EXE
       shell: pwsh
+      working-directory: app
+      env:
+        CSC_IDENTITY_AUTO_DISCOVERY: 'false'
       run: |
         $ErrorActionPreference = 'Stop'
-        $tool = Get-ChildItem .\html2exe-cli -Recurse -Filter HTML2EXE.exe | Select-Object -First 1
-        if (-not $tool) { throw "HTML2EXE.exe nicht gefunden" }
-        & $tool.FullName .\catan3d.html .\Catan3D.exe
+        npm install --save-dev electron electron-builder
+        if ($LASTEXITCODE -ne 0) { throw "npm install fehlgeschlagen" }
+        npx electron-builder --win portable --publish never
         if ($LASTEXITCODE -ne 0) { throw "Build fehlgeschlagen" }
-        if (-not (Test-Path .\Catan3D.exe)) { throw "Catan3D.exe wurde nicht erzeugt" }
+        if (-not (Test-Path .\dist\Catan3D.exe)) { throw "Catan3D.exe wurde nicht erzeugt" }
 
     - name: Create GitHub Release
       shell: pwsh
       run: |
         $ErrorActionPreference = 'Stop'
-        gh release create "$env:VERSION" .\Catan3D.exe `
+        gh release create "$env:VERSION" .\app\dist\Catan3D.exe `
           --repo "${{ github.repository }}" `
           --target "${{ github.sha }}" `
           --title "$env:RELEASE_NAME" `
