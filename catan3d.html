@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Catan 3D</title>
+<style>
+:root{--bg:#0e2a38;--panel:#16394acc;--line:#2b5266;--text:#eef3f0;--dim:#9db5bf;--gold:#f0b429}
+*{box-sizing:border-box}
+body{margin:0;overflow:hidden;background:var(--bg);color:var(--text);font:15px/1.4 system-ui,"Segoe UI",sans-serif}
+canvas{display:block;width:100vw;height:100vh;touch-action:none}
+button,input,select{font:inherit;color:var(--text);background:#16394a;border:1px solid var(--line);border-radius:8px;padding:8px 12px;cursor:pointer}
+button:hover{border-color:var(--gold)}button.on{background:var(--gold);color:#1b1500;border-color:var(--gold);font-weight:700}
+.box{position:fixed;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;backdrop-filter:blur(4px)}
+#top{top:10px;left:10px;width:min(310px,calc(100vw - 20px))}
+#bar{bottom:10px;left:50%;transform:translateX(-50%);display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:center;max-width:calc(100vw - 20px)}
+#lobby{top:50%;left:50%;transform:translate(-50%,-50%);width:min(360px,calc(100vw - 30px))}
+h1{font:700 1.6rem Georgia,serif;margin:0 0 8px}
+.p{border-left:6px solid;padding:2px 8px;margin:4px 0}
+.chip{padding:4px 10px;border-radius:14px;border:1px solid var(--line);white-space:nowrap}
+.hint{color:var(--gold);font-weight:700;margin:8px 0}
+.log{color:var(--dim);font-size:.85rem;max-height:110px;overflow:auto}
+:focus-visible{outline:2px solid var(--gold)}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="top" class="box" hidden></div>
+<div id="bar" class="box" hidden></div>
+<div id="lobby" class="box" hidden></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+const NAMES={wood:"Holz",brick:"Lehm",wool:"Wolle",grain:"Getreide",ore:"Erz"};
+const TC={wood:0x2f6b3a,wool:0x9ccf6a,grain:0xe0b83a,brick:0xb5522e,ore:0x6e7886,desert:0xd8c58d};
+const $=id=>document.getElementById(id);
+let token=sessionStorage.getItem("ct")||"",S=null,mode="road",ver=-1,built=false;
+const api=async(p,b)=>(await fetch(p,{method:"POST",body:JSON.stringify(b)})).json();
+
+/* ---------- 3D-Szene ---------- */
+const cv=$("c"),R=new THREE.WebGLRenderer({canvas:cv,antialias:true}),sc=new THREE.Scene(),cam=new THREE.PerspectiveCamera(45,1,.1,100);
+sc.background=new THREE.Color(0x0e2a38);
+sc.add(new THREE.HemisphereLight(0xffffff,0x335566,.9));
+const dl=new THREE.DirectionalLight(0xffffff,.8);dl.position.set(5,10,4);sc.add(dl);
+const sea=new THREE.Mesh(new THREE.CylinderGeometry(7.5,7.5,.1,64),new THREE.MeshStandardMaterial({color:0x2a6f97}));sea.position.y=-.2;sc.add(sea);
+const boardG=new THREE.Group(),dynG=new THREE.Group(),markG=new THREE.Group();sc.add(boardG,dynG,markG);
+const HG=new THREE.CylinderGeometry(.97,.97,.3,6),CG=new THREE.CylinderGeometry(1,1,1,24),BX=new THREE.BoxGeometry(1,1,1),CN=new THREE.ConeGeometry(1,1,4),SP=new THREE.SphereGeometry(.14,12,12);
+const mats={},mat=c=>mats[c]||(mats[c]=new THREE.MeshStandardMaterial({color:c}));
+const mk=()=>new THREE.MeshBasicMaterial({color:0xffee00,transparent:true,opacity:.8});
+let th=0,ph=.85,dist=11;
+function place(){cam.position.set(dist*Math.sin(ph)*Math.sin(th),dist*Math.cos(ph),dist*Math.sin(ph)*Math.cos(th));cam.lookAt(0,0,0)}
+function resize(){R.setSize(innerWidth,innerHeight);cam.aspect=innerWidth/innerHeight;cam.updateProjectionMatrix()}
+addEventListener("resize",resize);resize();place();
+let drag=null;
+cv.onpointerdown=e=>{drag={x:e.clientX,y:e.clientY,sx:e.clientX,sy:e.clientY}};
+cv.onpointermove=e=>{if(!drag)return;th-=(e.clientX-drag.x)*.01;ph=Math.max(.2,Math.min(1.45,ph-(e.clientY-drag.y)*.01));drag.x=e.clientX;drag.y=e.clientY;place()};
+cv.onpointerup=e=>{if(drag&&Math.hypot(e.clientX-drag.sx,e.clientY-drag.sy)<5)pick(e);drag=null};
+cv.onwheel=e=>{dist=Math.max(5,Math.min(20,dist+e.deltaY*.01));place();e.preventDefault()};
+const ray=new THREE.Raycaster();
+function pick(e){ray.setFromCamera({x:e.clientX/innerWidth*2-1,y:-(e.clientY/innerHeight)*2+1},cam);
+  const h=ray.intersectObjects(markG.children)[0];if(h)act(h.object.userData.t,h.object.userData.id)}
+(function loop(){requestAnimationFrame(loop);R.render(sc,cam)})();
+
+function tokenTex(n){const c=document.createElement("canvas");c.width=c.height=128;const x=c.getContext("2d");
+  x.fillStyle="#f4ecd3";x.beginPath();x.arc(64,64,60,0,7);x.fill();
+  x.fillStyle=(n==6||n==8)?"#c0272d":"#222";x.font="bold 64px Georgia";x.textAlign="center";x.textBaseline="middle";x.fillText(n,64,60);
+  x.font="20px Georgia";x.fillText("•".repeat(6-Math.abs(7-n)),64,100);return new THREE.CanvasTexture(c)}
+function buildBoard(b){b.tiles.forEach(t=>{
+  const m=new THREE.Mesh(HG,mat(TC[t.type]));m.position.set(t.x,.15,t.y);boardG.add(m);
+  if(t.num){const p=new THREE.Mesh(new THREE.PlaneGeometry(.62,.62),new THREE.MeshBasicMaterial({map:tokenTex(t.num)}));
+    p.rotation.x=-Math.PI/2;p.position.set(t.x,.32,t.y);boardG.add(p)}})}
+
+function bld(t,col,x,z){const g=new THREE.Group(),m=mat(col),w=t=="c"?.36:.26,h=t=="c"?.3:.2;
+  const a=new THREE.Mesh(BX,m);a.scale.set(w,h,w);a.position.y=.3+h/2;
+  const r=new THREE.Mesh(CN,m);r.scale.set(w*.8,.2,w*.8);r.position.y=.3+h+.1;r.rotation.y=Math.PI/4;
+  g.add(a,r);g.position.set(x,0,z);return g}
+function road(a,b,m){const dx=b[0]-a[0],dz=b[1]-a[1],r=new THREE.Mesh(BX,m);
+  r.scale.set(Math.hypot(dx,dz)*.7,.1,.14);r.position.set((a[0]+b[0])/2,.35,(a[1]+b[1])/2);r.rotation.y=-Math.atan2(dz,dx);return r}
+
+function drawDyn(){dynG.clear();markG.clear();const b=S.board;
+  S.vown.forEach(o=>{const[x,z]=b.V[o.v];dynG.add(bld(o.t,S.players[o.p].color.replace("#","0x")*1,x,z))});
+  S.eown.forEach(o=>{const[a,c]=b.E[o.e];dynG.add(road(b.V[a],b.V[c],mat(S.players[o.p].color.replace("#","0x")*1)))});
+  const t=b.tiles[S.robber],rb=new THREE.Mesh(CG,mat(0x111111));rb.scale.set(.16,.55,.16);rb.position.set(t.x+.38,.55,t.y);dynG.add(rb);
+  if(S.me==null||S.me!==S.cur||!S.legal)return;
+  const L=S.legal,keys=L.robber?["robber"]:S.phase=="setup"?Object.keys(L):[mode];
+  keys.forEach(k=>(L[k]||[]).forEach(id=>{let o;
+    if(k=="road"){const[a,c]=b.E[id];o=road(b.V[a],b.V[c],mk());o.scale.y=.16}
+    else if(k=="robber"){const t=b.tiles[id];o=new THREE.Mesh(CG,mk());o.scale.set(.5,.08,.5);o.position.set(t.x,.52,t.y)}
+    else{const[x,z]=b.V[id];o=new THREE.Mesh(SP,mk());o.position.set(x,.5,z)}
+    o.userData={t:k,id};markG.add(o)}))}
+
+/* ---------- Oberfläche ---------- */
+async function act(t,id,extra){const r=await api("/act",{token,type:t,id,...extra});if(r.error)alert(r.error)}
+function setMode(m){mode=m;drawDyn();drawUI()}
+async function join(){const r=await api("/join",{name:$("nm").value});if(r.token){token=r.token;sessionStorage.setItem("ct",token)}else alert(r.error)}
+function trade(){act("trade",null,{give:$("tg").value,get:$("tt").value})}
+const opts=sel=>Object.entries(NAMES).map(([k,v])=>`<option value="${k}"${k==sel?" selected":""}>${v}</option>`).join("");
+
+function drawUI(){
+  const lob=S.phase=="lobby",mine=S.me!=null&&S.me===S.cur&&S.phase!="over";
+  $("lobby").hidden=!lob;$("top").hidden=lob;$("bar").hidden=lob||S.me==null;
+  const list=S.players.map((p,i)=>`<div class="p" style="border-color:${p.color}">${!lob&&i==S.cur&&S.phase!="over"?"▶ ":""}${p.name}${i==S.me?" (du)":""}${lob?"":` – ${p.vp} SP, ${p.cards} Karten`}</div>`).join("");
+  if(lob){$("lobby").innerHTML=`<h1>Catan 3D</h1>`+list+(S.me==null?
+    `<p><input id="nm" placeholder="Dein Name" maxlength="16"> <button onclick="join()">Beitreten</button></p>`:
+    (S.me==0?`<p><button class="on" onclick="act('start')">Spiel starten</button></p><p style="color:var(--dim)">Du bist der Gastgeber. Es sind 1 bis 4 Spieler möglich.</p>`:
+    `<p style="color:var(--dim)">Warte, bis der Gastgeber startet.</p>`));return}
+  $("top").innerHTML=`<h1>Catan 3D</h1>${list}<div class="hint">${S.hint||(S.phase=="over"?S.log.at(-1):"Du schaust zu.")}</div>
+   ${S.dice?`<div>Letzter Wurf: ${S.dice[0]} + ${S.dice[1]} = <b>${S.dice[0]+S.dice[1]}</b></div>`:""}
+   <div class="log">${S.log.slice().reverse().join("<br>")}</div>
+   <div class="log" style="margin-top:6px">Ziehen = drehen, Mausrad = zoomen, gelbe Punkte anklicken = bauen.</div>`;
+  if(S.me==null)return;
+  const play=S.phase=="play"&&mine,free=play&&S.rolled&&!S.need_robber,L=S.legal||{};
+  $("bar").innerHTML=Object.keys(NAMES).map(k=>`<span class="chip">${NAMES[k]} <b>${S.res[k]}</b></span>`).join("")+
+   (play&&!S.rolled?`<button class="on" onclick="act('roll')">Würfeln</button>`:"")+
+   (free?[["road","Straße"],["settlement","Siedlung"],["city","Stadt"]].map(([k,n])=>`<button class="${mode==k?"on":""}" onclick="setMode('${k}')" ${L[k]&&L[k].length?"":"title='Nicht genug Rohstoffe oder kein Platz'"}>${n}${L[k]&&L[k].length?"":" ✗"}</button>`).join("")+
+   ` <span class="chip">4 <select id="tg">${opts("wood")}</select> gegen 1 <select id="tt">${opts("ore")}</select> <button onclick="trade()">Tauschen</button></span>
+   <button onclick="act('end')">Zug beenden</button>`:"");
+}
+
+/* ---------- Verbindung ---------- */
+async function poll(){
+  const used=token;
+  try{const r=await fetch(`/state?v=${ver}&t=${used}`);S=await r.json();ver=S.ver;
+    if(used&&S.me==null){token="";sessionStorage.removeItem("ct")}
+    if(!built){buildBoard(S.board);built=true}
+    if(!(document.activeElement&&/INPUT|SELECT/.test(document.activeElement.tagName)))drawUI();
+    drawDyn()}
+  catch(e){await new Promise(r=>setTimeout(r,1500))}
+  poll()}
+poll();
+</script>
+</body>
+</html>
