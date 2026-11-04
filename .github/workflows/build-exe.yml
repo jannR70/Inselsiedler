@@ -40,9 +40,11 @@ jobs:
         $ErrorActionPreference = 'Stop'
         if ($env:VERSION -notmatch '^v\d+\.\d+\.\d+$') { throw "Version muss das Format v1.2.3 haben" }
         if (-not (Test-Path .\catan3d.html)) { throw "catan3d.html nicht gefunden" }
+        if (-not (Test-Path .\icon.jpg)) { throw "icon.jpg nicht gefunden" }
 
         New-Item -ItemType Directory -Path .\app -Force | Out-Null
         Copy-Item .\catan3d.html .\app\catan3d.html
+        Copy-Item .\icon.jpg .\app\icon.jpg
 
         @'
         {
@@ -54,9 +56,12 @@ jobs:
           "build": {
             "appId": "de.catan3d.app",
             "productName": "Catan3D",
-            "files": ["main.js", "catan3d.html"],
+            "files": ["main.js", "catan3d.html", "icon.jpg"],
             "directories": { "output": "dist" },
-            "win": { "target": "portable" },
+            "win": { 
+              "target": "portable",
+              "icon": "icon.jpg"
+            },
             "portable": { "artifactName": "Catan3D.exe" }
           }
         }
@@ -66,7 +71,12 @@ jobs:
         const { app, BrowserWindow } = require('electron');
         const path = require('path');
         function createWindow() {
-          const win = new BrowserWindow({ width: 1280, height: 800, autoHideMenuBar: true });
+          const win = new BrowserWindow({ 
+            width: 1280, 
+            height: 800, 
+            autoHideMenuBar: true,
+            icon: path.join(__dirname, 'icon.jpg')
+          });
           win.loadFile(path.join(__dirname, 'catan3d.html'));
         }
         app.whenReady().then(createWindow);
