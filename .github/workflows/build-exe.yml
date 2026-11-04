@@ -26,12 +26,13 @@ jobs:
       uses: actions/checkout@v4
 
     - name: Download HTML2EXE CLI
+      # Lädt jetzt die korrekte ausführbare ZIP-Datei des Tools herunter
       run: |
         curl -L -o html2exe.zip https://github.com
         Expand-Archive -Path html2exe.zip -DestinationPath ./html2exe-cli
 
     - name: Build Single EXE
-      # Kompiliert die catan3d.html direkt in eine eigenständige Catan3D.exe
+      # Packt die catan3d.html direkt in eine einzelne, lauffähige Catan3D.exe
       run: |
         ./html2exe-cli/HTML2EXE.exe ./catan3d.html ./Catan3D.exe
 
