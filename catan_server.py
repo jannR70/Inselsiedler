@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Catan-Server: python catan_server.py [port]  ->  http://<deine-ip>:8000
+Unterstützt mehrere Räume (Lobbies / Spiele gleichzeitig).
 Liegt neben catan3d.html und liefert diese Datei auch aus. Keine Abhängigkeiten."""
 import json, math, os, random, secrets, socket, sys, threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -42,9 +43,10 @@ VADJ = {i: set() for i in range(len(V))}
 for a, b in E:
     VADJ[a].add(b); VADJ[b].add(a)
 
-G = {}
+# Dict von Raum-ID -> Spielzustand (G)
+GAMES = {}
 
-def new_game():
+def create_game_state(room_id):
     for _ in range(500):
         types = TILES[:]; random.shuffle(types)
         nums = NUMS[:]; random.shuffle(nums); it = iter(nums)
@@ -53,23 +55,35 @@ def new_game():
         if not any(hot(i) and hot(j) for i in range(19) for j in range(i)
                    if len(set(TH[i][2]) & set(TH[j][2])) == 2):
             break
-    G.clear()
-    G.update(phase="lobby", players=[], vown={}, eown={}, cur=0, rolled=False, dice=None,
-             need_robber=False, stage="settlement", last=None, setup_i=0, seq=[], ver=0,
-             winner=None, log=["Warte auf Spieler …"],
-             robber=types.index("desert"),
-             board={"V": V, "E": E, "tiles": [{"type": types[i], "num": tn[i], "x": TH[i][0],
-                    "y": TH[i][1], "v": TH[i][2]} for i in range(19)]})
+    return {
+        "room_id": room_id,
+        "phase": "lobby", "players": [], "vown": {}, "eown": {}, "cur": 0,
+        "rolled": False, "dice": None, "need_robber": False, "stage": "settlement",
+        "last": None, "setup_i": 0, "seq": [], "ver": 0, "winner": None,
+        "log": ["Warte auf Spieler …"],
+        "robber": types.index("desert"),
+        "board": {"V": V, "E": E, "tiles": [{"type": types[i], "num": tn[i], "x": TH[i][0],
+                 "y": TH[i][1], "v": TH[i][2]} for i in range(19)]}
+    }
 
-def bump():
-    G["ver"] += 1; lock.notify_all()
+def get_open_game():
+    for g in GAMES.values():
+        if g["phase"] == "lobby" and len(g["players"]) < 4:
+            return g
+    new_id = f"Room-{len(GAMES) + 1}"
+    g = create_game_state(new_id)
+    GAMES[new_id] = g
+    return g
 
-def say(m):
-    G["log"].append(m); G["log"] = G["log"][-30:]
+def bump(g):
+    g["ver"] += 1; lock.notify_all()
+
+def say(g, m):
+    g["log"].append(m); g["log"] = g["log"][-30:]
 
 # ---------- Regeln ----------
-def vp(pid):
-    return sum(1 if t == "s" else 2 for (o, t) in G["vown"].values() if o == pid)
+def vp(g, pid):
+    return sum(1 if t == "s" else 2 for (o, t) in g["vown"].values() if o == pid)
 
 def cards(p):
     return sum(p["res"].values())
@@ -81,50 +95,49 @@ def pay(p, c):
     for k, n in COST[c].items():
         p["res"][k] -= n
 
-def road_vertices(pid):
+def road_vertices(g, pid):
     s = set()
-    for e, o in G["eown"].items():
+    for e, o in g["eown"].items():
         if o == pid:
             s |= set(E[e])
     return s
 
-def settle_spots(pid):
-    free = [v for v in range(len(V)) if v not in G["vown"] and not (VADJ[v] & G["vown"].keys())]
-    if G["phase"] == "setup":
+def settle_spots(g, pid):
+    free = [v for v in range(len(V)) if v not in g["vown"] and not (VADJ[v] & g["vown"].keys())]
+    if g["phase"] == "setup":
         return free
-    mine = road_vertices(pid)
+    mine = road_vertices(g, pid)
     return [v for v in free if v in mine]
 
-def road_ok(pid, e):
-    if e in G["eown"]:
+def road_ok(g, pid, e):
+    if e in g["eown"]:
         return False
-    if G["phase"] == "setup":
-        return G["last"] in E[e]
-    mine = road_vertices(pid)
+    if g["phase"] == "setup":
+        return g["last"] in E[e]
+    mine = road_vertices(g, pid)
     for v in E[e]:
-        o = G["vown"].get(v)
+        o = g["vown"].get(v)
         if (o and o[0] == pid) or (o is None and v in mine):
             return True
     return False
 
-def legal(pid):
-    g = G; p = g["players"][pid]
+def legal(g, pid):
+    p = g["players"][pid]
     if g["phase"] == "setup" and pid == g["cur"]:
         if g["stage"] == "settlement":
-            return {"settlement": settle_spots(pid)}
-        return {"road": [e for e in range(len(E)) if road_ok(pid, e)]}
+            return {"settlement": settle_spots(g, pid)}
+        return {"road": [e for e in range(len(E)) if road_ok(g, pid, e)]}
     if g["phase"] != "play" or pid != g["cur"] or not g["rolled"]:
         return {}
     if g["need_robber"]:
         return {"robber": [i for i in range(19) if i != g["robber"]]}
     return {
-        "road": [e for e in range(len(E)) if road_ok(pid, e)] if afford(p, "road") else [],
-        "settlement": settle_spots(pid) if afford(p, "settlement") else [],
+        "road": [e for e in range(len(E)) if road_ok(g, pid, e)] if afford(p, "road") else [],
+        "settlement": settle_spots(g, pid) if afford(p, "settlement") else [],
         "city": [v for v, (o, t) in g["vown"].items() if o == pid and t == "s"] if afford(p, "city") else [],
     }
 
-def hint(pid):
-    g = G
+def hint(g, pid):
     if g["phase"] == "over":
         return f"{g['players'][g['winner']]['name']} hat gewonnen!"
     if pid != g["cur"]:
@@ -137,8 +150,7 @@ def hint(pid):
         return "Versetze den Räuber auf ein markiertes Feld."
     return "Baue, tausche oder beende deinen Zug."
 
-def distribute(n):
-    g = G
+def distribute(g, n):
     for i, t in enumerate(g["board"]["tiles"]):
         if t["num"] != n or i == g["robber"]:
             continue
@@ -147,8 +159,8 @@ def distribute(n):
             if o:
                 g["players"][o[0]]["res"][t["type"]] += 1 if o[1] == "s" else 2
 
-def steal(pid):
-    g = G; t = g["board"]["tiles"][g["robber"]]
+def steal(g, pid):
+    t = g["board"]["tiles"][g["robber"]]
     victims = {g["vown"][v][0] for v in t["v"] if v in g["vown"]} - {pid}
     victims = [x for x in victims if cards(g["players"][x]) > 0]
     if not victims:
@@ -156,25 +168,25 @@ def steal(pid):
     x = random.choice(victims); hand = g["players"][x]
     k = random.choice([r for r in RES for _ in range(hand["res"][r])])
     hand["res"][k] -= 1; g["players"][pid]["res"][k] += 1
-    say(f"{g['players'][pid]['name']} stiehlt eine Karte von {hand['name']}.")
+    say(g, f"{g['players'][pid]['name']} stiehlt eine Karte von {hand['name']}.")
 
-def start():
-    n = len(G["players"])
-    G.update(phase="setup", seq=list(range(n)) + list(range(n))[::-1], setup_i=0, stage="settlement")
-    G["cur"] = G["seq"][0]
-    say("Das Spiel beginnt. Reihum je zwei Siedlungen mit Straße.")
+def start(g):
+    n = len(g["players"])
+    g.update(phase="setup", seq=list(range(n)) + list(range(n))[::-1], setup_i=0, stage="settlement")
+    g["cur"] = g["seq"][0]
+    say(g, "Das Spiel beginnt. Reihum je zwei Siedlungen mit Straße.")
 
-def act(pid, a):
-    g = G; t = a.get("type"); p = g["players"][pid]
+def act(g, pid, a):
+    t = a.get("type"); p = g["players"][pid]
     if g["phase"] == "lobby":
         if t == "start" and pid == 0:
-            return start()
+            return start(g)
         return "Nur der erste Spieler kann starten."
     if g["phase"] == "over" or pid != g["cur"]:
         return "Du bist nicht am Zug."
     i = a.get("id")
     if t in ("settlement", "road", "city", "robber"):
-        if i not in legal(pid).get(t, []):
+        if i not in legal(g, pid).get(t, []):
             return "Das geht dort nicht."
         setup = g["phase"] == "setup"
         if t == "settlement":
@@ -194,28 +206,28 @@ def act(pid, a):
             if setup:
                 g["setup_i"] += 1
                 if g["setup_i"] >= len(g["seq"]):
-                    g.update(phase="play", cur=0, rolled=False); say("Die Aufbauphase ist vorbei.")
+                    g.update(phase="play", cur=0, rolled=False); say(g, "Die Aufbauphase ist vorbei.")
                 else:
                     g["cur"] = g["seq"][g["setup_i"]]; g["stage"] = "settlement"
         else:
-            g["robber"] = i; g["need_robber"] = False; steal(pid)
-        if vp(pid) >= WIN:
-            g.update(phase="over", winner=pid); say(f"{p['name']} gewinnt mit {vp(pid)} Punkten!")
+            g["robber"] = i; g["need_robber"] = False; steal(g, pid)
+        if vp(g, pid) >= WIN:
+            g.update(phase="over", winner=pid); say(g, f"{p['name']} gewinnt mit {vp(g, pid)} Punkten!")
     elif t == "roll":
         if g["phase"] != "play" or g["rolled"]:
             return "Du hast schon gewürfelt."
         d = [random.randint(1, 6), random.randint(1, 6)]; n = sum(d)
-        g["dice"] = d; g["rolled"] = True; say(f"{p['name']} würfelt {n}.")
+        g["dice"] = d; g["rolled"] = True; say(g, f"{p['name']} würfelt {n}.")
         if n == 7:
             for q in g["players"]:
                 c = cards(q)
                 if c > 7:
                     for _ in range(c // 2):
                         k = random.choice([r for r in RES for _ in range(q["res"][r])]); q["res"][k] -= 1
-                    say(f"{q['name']} wirft {c // 2} Karten ab.")
+                    say(g, f"{q['name']} wirft {c // 2} Karten ab.")
             g["need_robber"] = True
         else:
-            distribute(n)
+            distribute(g, n)
     elif t == "end":
         if g["phase"] != "play" or not g["rolled"] or g["need_robber"]:
             return "Erst würfeln und den Räuber versetzen."
@@ -226,24 +238,32 @@ def act(pid, a):
             return "Jetzt nicht möglich."
         if give not in RES or get not in RES or give == get or p["res"][give] < 4:
             return "Du brauchst 4 gleiche Karten."
-        p["res"][give] -= 4; p["res"][get] += 1; say(f"{p['name']} tauscht 4:1 mit der Bank.")
+        p["res"][give] -= 4; p["res"][get] += 1; say(g, f"{p['name']} tauscht 4:1 mit der Bank.")
     else:
         return "Unbekannte Aktion."
 
-def snapshot(token):
-    g = G
+def find_game_by_token(token):
+    for g in GAMES.values():
+        for i, p in enumerate(g["players"]):
+            if p["token"] == token:
+                return g, i
+    return None, None
+
+def snapshot(g, token):
+    if not g:
+        return {"error": "Raum nicht gefunden"}
     pid = next((i for i, p in enumerate(g["players"]) if p["token"] == token), None)
     d = {"ver": g["ver"], "phase": g["phase"], "me": pid, "board": g["board"], "robber": g["robber"],
          "cur": g["cur"], "rolled": g["rolled"], "need_robber": g["need_robber"], "dice": g["dice"],
-         "win": WIN, "log": g["log"][-8:],
-         "players": [{"name": p["name"], "color": p["color"], "vp": vp(i), "cards": cards(p)}
+         "win": WIN, "log": g["log"][-8:], "room_id": g["room_id"],
+         "players": [{"name": p["name"], "color": p["color"], "vp": vp(g, i), "cards": cards(p)}
                      for i, p in enumerate(g["players"])],
          "vown": [{"v": v, "p": o[0], "t": o[1]} for v, o in g["vown"].items()],
          "eown": [{"e": e, "p": o} for e, o in g["eown"].items()]}
     if pid is not None:
         d["res"] = g["players"][pid]["res"]
         if g["phase"] in ("setup", "play"):
-            d["legal"] = legal(pid); d["hint"] = hint(pid)
+            d["legal"] = legal(g, pid); d["hint"] = hint(g, pid)
     return d
 
 # ---------- HTTP ----------
@@ -270,8 +290,11 @@ class H(BaseHTTPRequestHandler):
         if u.path == "/state":
             ver = int(q.get("v", ["-1"])[0]); tok = q.get("t", [""])[0]
             with lock:
-                lock.wait_for(lambda: G["ver"] > ver, timeout=20)
-                return self.send(200, snapshot(tok))
+                g, _ = find_game_by_token(tok)
+                if not g:
+                    return self.send(200, {"error": "Ungültiges Token oder Spiel nicht gefunden"})
+                lock.wait_for(lambda: g["ver"] > ver, timeout=20)
+                return self.send(200, snapshot(g, tok))
         f = os.path.join(os.path.dirname(os.path.abspath(__file__)), "catan3d.html")
         try:
             self.send(200, open(f, "rb").read(), "text/html")
@@ -287,19 +310,19 @@ class H(BaseHTTPRequestHandler):
             if self.path == "/join":
                 name = str(a.get("name", "")).strip()[:16]
                 if not name: return self.send(200, {"error": "Bitte einen Namen eingeben."})
-                if G["phase"] != "lobby" or len(G["players"]) >= 4:
-                    return self.send(200, {"error": "Das Spiel läuft schon oder ist voll."})
+                g = get_open_game()
                 tok = secrets.token_hex(8)
-                G["players"].append({"name": name, "token": tok, "color": COLORS[len(G["players"])],
+                g["players"].append({"name": name, "token": tok, "color": COLORS[len(g["players"])],
                                      "res": {k: 0 for k in RES}})
-                say(f"{name} ist beigetreten."); bump()
-                return self.send(200, {"token": tok})
+                say(g, f"{name} ist beigetreten."); bump(g)
+                return self.send(200, {"token": tok, "room_id": g["room_id"]})
             if self.path == "/act":
-                pid = next((i for i, p in enumerate(G["players"]) if p["token"] == a.get("token")), None)
-                if pid is None: return self.send(200, {"error": "Unbekannter Spieler."})
-                err = act(pid, a)
+                tok = a.get("token")
+                g, pid = find_game_by_token(tok)
+                if g is None or pid is None: return self.send(200, {"error": "Unbekannter Spieler."})
+                err = act(g, pid, a)
                 if err: return self.send(200, {"error": err})
-                bump()
+                bump(g)
                 return self.send(200, {"ok": True})
         self.send(404, {"error": "?"})
 
@@ -312,8 +335,8 @@ def local_ip():
 
 if __name__ == "__main__":
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8000
-    new_game()
+    get_open_game()
     srv = ThreadingHTTPServer(("0.0.0.0", port), H); srv.daemon_threads = True
-    print(f"Catan läuft:  http://localhost:{port}   |   im Netzwerk: http://{local_ip()}:{port}")
+    print(f"Catan läuft mit Multi-Lobby System: http://localhost:{port} | im Netzwerk: http://{local_ip()}:{port}")
     try: srv.serve_forever()
     except KeyboardInterrupt: pass
