@@ -4,3 +4,8 @@ Eine digitale Umsetzung des Brettspiel-Klassikers **Die Siedler von Catan**. Bau
 
 ## Spiel:
 ![Bild](main.png)
+
+##Aufsetzen vom Server:
+1. Man benötigt Python
+2. Laden Sie sich die Datei herunter
+3. Starten Sie den Server mit Python ```Python catan_server.py```
