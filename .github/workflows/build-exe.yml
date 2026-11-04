@@ -1,4 +1,4 @@
-name: Build Catan3D HTML to EXE
+name: Build Catan3D to Single EXE
 
 on:
   workflow_dispatch:
@@ -14,39 +14,29 @@ on:
         default: 'Catan3D Release'
         type: string
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: windows-latest
 
     steps:
-    # 1. Quellcode auschecken (Nutzt v4, wird von GitHub temporär auf Node 24 angehoben)
     - name: Checkout Code
       uses: actions/checkout@v4
 
-    # 2. Node.js Umgebung bereitstellen (Explizit auf Node 24 gesetzt)
-    - name: Setup Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: 24
-
-    # 3. Nativefier installieren
-    - name: Install Nativefier
-      run: npm install -g nativefier
-
-    # 4. HTML-Datei in EXE umwandeln
-    - name: Convert HTML to EXE
+    - name: Download HTML2EXE CLI
       run: |
-        $htmlPath = "file:///" + (Get-Item "catan3d.html").FullName.Replace('\', '/')
-        nativefier --name "Catan3D" --app-version "${{ github.event.inputs.version }}" $htmlPath
+        curl -L -o html2exe.zip https://github.com
+        Expand-Archive -Path html2exe.zip -DestinationPath ./html2exe-cli
 
-    # 5. Ausgabeordner als ZIP komprimieren
-    - name: Zip the Output Folder
+    - name: Build Single EXE
+      # Kompiliert die catan3d.html direkt in eine eigenständige Catan3D.exe
       run: |
-        Compress-Archive -Path Catan3D-win32-x64 -DestinationPath Catan3D_${{ github.event.inputs.version }}.zip
+        ./html2exe-cli/HTML2EXE.exe ./catan3d.html ./Catan3D.exe
 
-    # 6. GitHub Release erstellen und ZIP hochladen
-    - name: Create GitHub Release and Upload EXE
+    - name: Create GitHub Release and Upload Single EXE
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
-        gh release create ${{ github.event.inputs.version }} Catan3D_${{ github.event.inputs.version }}.zip --title "${{ github.event.inputs.release_name }}" --notes "Automatischer Build von Catan3D. Version: ${{ github.event.inputs.version }}"
+        gh release create ${{ github.event.inputs.version }} ./Catan3D.exe --title "${{ github.event.inputs.release_name }}" --notes "Automatischer Build von Catan3D als einzelne EXE. Version: ${{ github.event.inputs.version }}"
