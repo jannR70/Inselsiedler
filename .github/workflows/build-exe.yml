@@ -1,0 +1,49 @@
+name: Build Catan3D HTML to EXE
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Versionsnummer (z. B. v1.0.0)'
+        required: true
+        default: 'v1.0.0'
+        type: string
+      release_name:
+        description: 'Titel des Release'
+        required: false
+        default: 'Catan3D Release'
+        type: string
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: 20
+
+    - name: Install Nativefier
+      run: npm install -g nativefier
+
+    - name: Convert HTML to EXE
+      # Hier wird nun gezielt catan3d.html eingelesen und die App "Catan3D" genannt
+      run: |
+        $htmlPath = "file:///" + (Get-Item "catan3d.html").FullName.Replace('\', '/')
+        nativefier --name "Catan3D" --app-version "${{ github.event.inputs.version }}" $htmlPath
+
+    - name: Zip the Output Folder
+      # Verpackt den von Nativefier erstellten Ordner in eine kompakte ZIP-Datei
+      run: |
+        Compress-Archive -Path Catan3D-win32-x64 -DestinationPath Catan3D_${{ github.event.inputs.version }}.zip
+
+    - name: Create GitHub Release and Upload EXE
+      # Erstellt das Release auf GitHub und hinterlegt die ZIP-Datei
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        gh release create ${{ github.event.inputs.version }} Catan3D_${{ github.event.inputs.version }}.zip --title "${{ github.event.inputs.release_name }}" --notes "Automatischer Build von Catan3D. Version: ${{ github.event.inputs.version }}"
