@@ -19,30 +19,33 @@ jobs:
     runs-on: windows-latest
 
     steps:
+    # 1. Quellcode auschecken (Nutzt v4, wird von GitHub temporär auf Node 24 angehoben)
     - name: Checkout Code
       uses: actions/checkout@v4
 
+    # 2. Node.js Umgebung bereitstellen (Explizit auf Node 24 gesetzt)
     - name: Setup Node.js
       uses: actions/setup-node@v4
       with:
-        node-version: 20
+        node-version: 24
 
+    # 3. Nativefier installieren
     - name: Install Nativefier
       run: npm install -g nativefier
 
+    # 4. HTML-Datei in EXE umwandeln
     - name: Convert HTML to EXE
-      # Hier wird nun gezielt catan3d.html eingelesen und die App "Catan3D" genannt
       run: |
         $htmlPath = "file:///" + (Get-Item "catan3d.html").FullName.Replace('\', '/')
         nativefier --name "Catan3D" --app-version "${{ github.event.inputs.version }}" $htmlPath
 
+    # 5. Ausgabeordner als ZIP komprimieren
     - name: Zip the Output Folder
-      # Verpackt den von Nativefier erstellten Ordner in eine kompakte ZIP-Datei
       run: |
         Compress-Archive -Path Catan3D-win32-x64 -DestinationPath Catan3D_${{ github.event.inputs.version }}.zip
 
+    # 6. GitHub Release erstellen und ZIP hochladen
     - name: Create GitHub Release and Upload EXE
-      # Erstellt das Release auf GitHub und hinterlegt die ZIP-Datei
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
