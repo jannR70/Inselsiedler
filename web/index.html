@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Inselsiedler - Das Strategische 3D Brettspiel</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@700;900&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary-gold: #f6c343;
+            --secondary-gold: #e39b1b;
+            --accent-warm: #d96b27;
+            --bg-dark: #091a24;
+            --card-bg: rgba(15, 38, 54, 0.75);
+            --card-border: rgba(255, 255, 255, 0.12);
+            --text-light: #f0f6f8;
+            --text-dim: #9fb5c3;
+            --wood-green: #3a7d44;
+            --brick-red: #c05836;
+            --wool-light: #8ecf52;
+            --grain-gold: #e5b438;
+            --ore-blue: #6c7c96;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            background-color: var(--bg-dark);
+            background-image: 
+                radial-gradient(circle at 15% 20%, rgba(30, 91, 122, 0.35) 0%, transparent 45%),
+                radial-gradient(circle at 85% 80%, rgba(217, 107, 39, 0.15) 0%, transparent 50%);
+            color: var(--text-light);
+            line-height: 1.6;
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+
+        /* Header & Hero Section */
+        header {
+            padding: 2rem 1rem 4rem;
+            text-align: center;
+            position: relative;
+        }
+
+        .container {
+            max-width: 1100px;
+            margin: 0 auto;
+            padding: 0 1.5rem;
+        }
+
+        .hero-badge {
+            display: inline-block;
+            background: rgba(246, 195, 67, 0.12);
+            border: 1px solid rgba(246, 195, 67, 0.3);
+            color: var(--primary-gold);
+            padding: 0.4rem 1.2rem;
+            border-radius: 50px;
+            font-size: 0.9rem;
+            font-weight: 600;
+            margin-bottom: 1.5rem;
+            letter-spacing: 0.5px;
+        }
+
+        h1 {
+            font-family: 'Cinzel', serif;
+            font-size: clamp(2.5rem, 6vw, 4.5rem);
+            font-weight: 900;
+            background: linear-gradient(135deg, #fff3d1 0%, var(--primary-gold) 50%, var(--secondary-gold) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            text-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            margin-bottom: 1rem;
+        }
+
+        .tagline {
+            font-size: 1.25rem;
+            color: var(--text-dim);
+            max-width: 650px;
+            margin: 0 auto 2.5rem;
+        }
+
+        .cta-group {
+            display: flex;
+            gap: 1rem;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 0.9rem 2rem;
+            font-size: 1.05rem;
+            font-weight: 700;
+            border-radius: 12px;
+            text-decoration: none;
+            transition: all 0.25s ease;
+            cursor: pointer;
+        }
+
+        .btn-primary {
+            background: linear-gradient(180deg, var(--primary-gold), var(--secondary-gold));
+            color: #1c1300;
+            box-shadow: 0 6px 20px rgba(246, 195, 67, 0.35);
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 10px 25px rgba(246, 195, 67, 0.5);
+            filter: brightness(1.08);
+        }
+
+        .btn-secondary {
+            background: var(--card-bg);
+            border: 1px solid var(--card-border);
+            color: var(--text-light);
+            backdrop-filter: blur(10px);
+        }
+
+        .btn-secondary:hover {
+            background: rgba(255, 255, 255, 0.12);
+            border-color: rgba(255, 255, 255, 0.3);
+            transform: translateY(-3px);
+        }
+
+        /* Grid & Cards Section */
+        .main-grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 2.5rem;
+            margin-bottom: 4rem;
+        }
+
+        @media (min-width: 850px) {
+            .main-grid {
+                grid-template-columns: 1.1fr 0.9fr;
+                align-items: center;
+            }
+        }
+
+        .card {
+            background: var(--card-bg);
+            border: 1px solid var(--card-border);
+            border-radius: 20px;
+            padding: 2rem;
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            box-shadow: 0 15px 35px rgba(0, 0, 0, 0.3);
+        }
+
+        .game-art-box {
+            position: relative;
+            text-align: center;
+        }
+
+        .game-art-box img {
+            width: 100%;
+            max-width: 420px;
+            border-radius: 24px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.6), 0 0 50px rgba(246, 195, 67, 0.15);
+            border: 2px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .section-title {
+            font-family: 'Cinzel', serif;
+            font-size: 1.8rem;
+            color: var(--primary-gold);
+            margin-bottom: 1.2rem;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .resource-tags {
+            display: flex;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+            margin: 1.5rem 0;
+        }
+
+        .res-tag {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.4rem;
+            padding: 0.4rem 0.8rem;
+            border-radius: 8px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            background: rgba(255,255,255,0.06);
+            border: 1px solid rgba(255,255,255,0.08);
+        }
+
+        /* Features List */
+        .features-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 1.5rem;
+            margin: 3rem 0;
+        }
+
+        .feature-card {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.07);
+            border-radius: 16px;
+            padding: 1.5rem;
+            transition: transform 0.2s;
+        }
+
+        .feature-card:hover {
+            transform: translateY(-4px);
+            border-color: rgba(246, 195, 67, 0.3);
+        }
+
+        .feature-icon {
+            font-size: 2rem;
+            margin-bottom: 0.75rem;
+        }
+
+        .feature-card h3 {
+            font-size: 1.2rem;
+            margin-bottom: 0.5rem;
+            color: var(--text-light);
+        }
+
+        .feature-card p {
+            color: var(--text-dim);
+            font-size: 0.95rem;
+        }
+
+        /* Release Section */
+        .release-box {
+            background: linear-gradient(135deg, rgba(246, 195, 67, 0.08) 0%, rgba(15, 38, 54, 0.9) 100%);
+            border: 1px solid rgba(246, 195, 67, 0.25);
+            text-align: center;
+            padding: 3rem 2rem;
+            margin-bottom: 4rem;
+        }
+
+        .release-box h2 {
+            font-family: 'Cinzel', serif;
+            font-size: 2.2rem;
+            margin-bottom: 1rem;
+            color: #ffffff;
+        }
+
+        .release-box p {
+            color: var(--text-dim);
+            max-width: 600px;
+            margin: 0 auto 2rem;
+        }
+
+        /* Footer */
+        footer {
+            text-align: center;
+            padding: 2rem;
+            color: var(--text-dim);
+            font-size: 0.9rem;
+            border-top: 1px solid var(--card-border);
+        }
+
+        footer a {
+            color: var(--primary-gold);
+            text-decoration: none;
+        }
+
+        footer a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <div class="container">
+            <span class="hero-badge">🎮 Neuestes Release verfügbar</span>
+            <h1>INSELSIEDLER</h1>
+            <p class="tagline">Das strategische 3D-Aufbauspiel im Browser. Besiedle die Insel, handle mit Rohstoffen und baue deine Zivilisation auf!</p>
+            
+            <div class="cta-group">
+                <a href="https://github.com/jannR70/Inselsiedler/releases/latest" target="_blank" class="btn btn-primary">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                    Neuestes Release Herunterladen
+                </a>
+                <a href="https://github.com/jannR70/Inselsiedler" target="_blank" class="btn btn-secondary">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+                    GitHub Repository
+                </a>
+            </div>
+        </div>
+    </header>
+
+    <main class="container">
+        <div class="main-grid">
+            <div class="card">
+                <h2 class="section-title">Über das Spiel</h2>
+                <p><strong>Inselsiedler</strong> bringt das klassische Brettspiel-Erlebnis in eine beeindruckende 3D-Browserumgebung. Erforsche ein dynamisch generiertes Spielfeld aus sechseckigen Geländefeldern, sammle wertvolle Ressourcen und sichere dir die Vorherrschaft auf der Insel!</p>
+                
+                <div class="resource-tags">
+                    <span class="res-tag" style="border-color: var(--wood-green);">🌲 Holz</span>
+                    <span class="res-tag" style="border-color: var(--brick-red);">🧱 Lehm</span>
+                    <span class="res-tag" style="border-color: var(--wool-light);">🐑 Wolle</span>
+                    <span class="res-tag" style="border-color: var(--grain-gold);">🌾 Getreide</span>
+                    <span class="res-tag" style="border-color: var(--ore-blue);">⛏️ Erz</span>
+                </div>
+
+                <p>Baue Straßen, gründe strategische Siedlungen und baue sie zu prächtigen Städten aus. Verhandle mit deinen Mitspielern oder dem Seehafen, wende clever den Räuber ab und sammle als Erster die nötigen Siegpunkte für den Triumph!</p>
+            </div>
+
+            <div class="game-art-box">
+                <img src="icon.jpg" alt="Inselsiedler Logo & 3D Hexfeld Grafik">
+            </div>
+        </div>
+
+        <h2 class="section-title" style="text-align: center; justify-content: center;">Features Highlights</h2>
+        <div class="features-grid">
+            <div class="feature-card">
+                <div class="feature-icon">🎲</div>
+                <h3>3D Hexfeld-Spielfeld</h3>
+                <p>Wunderschöne dreidimensionale Spielwelt mit benutzerdefinierten Shaders, stimmungsvollem Licht und voller Kamera-Freiheit.</p>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon">👥</div>
+                <h3>Multiplayer & Lobby</h3>
+                <p>Spiele nahtlos online mit deinen Freunden. Einfache Server-Verbindung mit Raum-Lobby und Echtzeit-Synchronisation.</p>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon">🤝</div>
+                <h3>Handel & Strategie</h3>
+                <p>Nutze clever die Rohstoffe Holz, Lehm, Wolle, Getreide und Erz zum Bauen oder tausche sie im 4:1 Seehandel um.</p>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon">🥷</div>
+                <h3>Räuber & Events</h3>
+                <p>Würfere eine 7, versetze den Räuber und blockiere gegnerische Erträge, um dir den entscheidenden Vorteil zu sichern.</p>
+            </div>
+        </div>
+
+        <div class="card release-box">
+            <h2>Bereit zum Besiedeln?</h2>
+            <p>Lade dir jetzt den aktuellsten Quellcode sowie die neusten Releases direkt von GitHub herunter und starte dein eigenes Spiel.</p>
+            <a href="https://github.com/jannR70/Inselsiedler/releases/latest" target="_blank" class="btn btn-primary">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                Jetzt Release Herunterladen
+            </a>
+        </div>
+    </main>
+
+    <footer>
+        <p>Inselsiedler &copy; 2026 – Erstellt mit Leidenschaft | Quellcode auf <a href="https://github.com/jannR70/Inselsiedler" target="_blank">GitHub (jannR70/Inselsiedler)</a></p>
+    </footer>
+
+</body>
+</html>
