@@ -51,12 +51,122 @@ h1{font:700 1.7rem Georgia,"Times New Roman",serif;margin:0 0 10px;letter-spacin
 .input-group input{width:100%;cursor:text}
 .sep{width:1px;height:26px;background:var(--line)}
 :focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+
+/* Neu hinzugefügte UI-Elemente */
+#costs-box {
+  top: 12px;
+  right: 12px;
+  width: 220px;
+  font-size: .85rem;
+}
+#costs-box h2 {
+  font-size: 1rem;
+  margin: 0 0 8px 0;
+  color: var(--gold);
+}
+.cost-item {
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(255,255,255,.08);
+}
+.cost-item:last-child {
+  border-bottom: none;
+  margin-bottom: 0;
+  padding-bottom: 0;
+}
+.cost-title {
+  font-weight: bold;
+  margin-bottom: 2px;
+}
+.cost-res {
+  color: var(--dim);
+  font-size: .8rem;
+}
+#toast-container {
+  position: fixed;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+}
+.toast {
+  background: rgba(26, 75, 45, 0.9);
+  border: 1px solid rgba(130, 196, 66, 0.5);
+  color: #fff;
+  padding: 10px 18px;
+  border-radius: 20px;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.4);
+  backdrop-filter: blur(8px);
+  animation: fadeInOut 3s forwards;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+@keyframes fadeInOut {
+  0% { opacity: 0; transform: translateY(-15px) scale(0.9); }
+  15% { opacity: 1; transform: translateY(0) scale(1); }
+  80% { opacity: 1; transform: translateY(0) scale(1); }
+  100% { opacity: 0; transform: translateY(-20px) scale(0.9); }
+}
+#victory-screen {
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(420px, calc(100vw - 30px));
+  text-align: center;
+  padding: 32px 24px;
+  z-index: 2000;
+  border: 2px solid var(--gold);
+  background: linear-gradient(180deg, rgba(20,45,60,0.95), rgba(8,20,30,0.95));
+  box-shadow: 0 0 50px rgba(246,195,67,0.3);
+}
+#victory-screen h1 {
+  font-size: 2.2rem;
+  margin-bottom: 15px;
+}
+.winner-name {
+  font-size: 1.5rem;
+  font-weight: bold;
+  color: #fff;
+  margin: 15px 0;
+  padding: 10px;
+  background: rgba(246,195,67,0.15);
+  border-radius: 12px;
+  border: 1px solid rgba(246,195,67,0.3);
+}
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
 <div id="top" class="box" hidden></div>
 <div id="bar" class="box" hidden></div>
+<div id="costs-box" class="box" hidden>
+  <h2>📜 Baukosten</h2>
+  <div class="cost-item">
+    <div class="cost-title">🛤️ Straße</div>
+    <div class="cost-res">🌲 Holz + 🧱 Lehm</div>
+  </div>
+  <div class="cost-item">
+    <div class="cost-title">🏠 Siedlung</div>
+    <div class="cost-res">🌲 Holz + 🧱 Lehm + 🐑 Wolle + 🌾 Getreide</div>
+  </div>
+  <div class="cost-item">
+    <div class="cost-title">🏰 Stadt</div>
+    <div class="cost-res">🌾🌾 Getreide + ⛏️⛏️⛏️ Erz</div>
+  </div>
+</div>
+<div id="toast-container"></div>
+<div id="victory-screen" class="box" hidden>
+  <h1>🏆 Sieg! 🏆</h1>
+  <p style="color:var(--dim)">Das Spiel ist zu Ende!</p>
+  <div id="winner-display" class="winner-name"></div>
+  <button class="on" style="margin-top:15px;padding:10px 24px" onclick="$('victory-screen').hidden=true">Weiter ansehen</button>
+</div>
 <div id="connect-screen" class="box">
   <h1>Catan 3D</h1>
   <p style="color:var(--dim);font-size:.92rem;margin:0 0 6px">Wähle den Server und deinen Namen aus, um beizutreten.</p>
@@ -82,6 +192,119 @@ const $=id=>document.getElementById(id);
 let token = sessionStorage.getItem("ct") || "";
 let serverUrl = localStorage.getItem("catan_srv") || window.location.host || "localhost:8000";
 let S = null, mode = "road", ver = -1, built = false, pollingActive = false;
+let prevRes = null;
+let soundEnabled = true;
+
+// Audio-Synthesizer via Web Audio API
+const AudioContext = window.AudioContext || window.webkitAudioContext;
+let audioCtx = null;
+
+function initAudio() {
+  if(!audioCtx) audioCtx = new AudioContext();
+  if(audioCtx.state === 'suspended') audioCtx.resume();
+}
+document.addEventListener('pointerdown', initAudio, { once: true });
+
+// Einzelner realistischer Holz/Würfel-Klack
+function playSingleDiceHit(time, volume = 1.0) {
+  if(!audioCtx) return;
+  const now = time;
+  
+  // 1. Niederfrequenter Holzkörper-Impuls (Resonanz)
+  const osc = audioCtx.createOscillator();
+  const oscGain = audioCtx.createGain();
+  osc.type = 'triangle';
+  osc.frequency.setValueAtTime(140 + Math.random() * 60, now);
+  osc.frequency.exponentialRampToValueAtTime(40, now + 0.03);
+  
+  oscGain.gain.setValueAtTime(0.25 * volume, now);
+  oscGain.gain.exponentialRampToValueAtTime(0.001, now + 0.035);
+  
+  osc.connect(oscGain);
+  oscGain.connect(audioCtx.destination);
+  osc.start(now);
+  osc.stop(now + 0.04);
+
+  // 2. Rausch-Klack (Aufprall-Geräusch)
+  const bufferSize = audioCtx.sampleRate * 0.02;
+  const noiseBuffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+  const output = noiseBuffer.getChannelData(0);
+  for (let i = 0; i < bufferSize; i++) {
+    output[i] = Math.random() * 2 - 1;
+  }
+
+  const noise = audioCtx.createBufferSource();
+  noise.buffer = noiseBuffer;
+
+  const filter = audioCtx.createBiquadFilter();
+  filter.type = 'bandpass';
+  filter.frequency.setValueAtTime(1200 + Math.random() * 800, now);
+  filter.Q.setValueAtTime(3, now);
+
+  const noiseGain = audioCtx.createGain();
+  noiseGain.gain.setValueAtTime(0.35 * volume, now);
+  noiseGain.gain.exponentialRampToValueAtTime(0.001, now + 0.02);
+
+  noise.connect(filter);
+  filter.connect(noiseGain);
+  noiseGain.connect(audioCtx.destination);
+
+  noise.start(now);
+  noise.stop(now + 0.025);
+}
+
+function playSound(type) {
+  if(!audioCtx) return;
+  try {
+    const now = audioCtx.currentTime;
+    if(type === 'roll') {
+      // Simuliere mehrfaches Rollen & Aufprallen des Würfels auf dem Spielfeld
+      const impacts = [0, 0.07, 0.15, 0.24, 0.34, 0.45, 0.58];
+      impacts.forEach((delay, idx) => {
+        const vol = Math.pow((impacts.length - idx) / impacts.length, 1.2);
+        playSingleDiceHit(now + delay, vol);
+      });
+    } else if(type === 'gain') {
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(523.25, now);
+      osc.frequency.exponentialRampToValueAtTime(659.25, now + 0.1);
+      osc.frequency.exponentialRampToValueAtTime(783.99, now + 0.2);
+      gain.gain.setValueAtTime(0.15, now);
+      gain.gain.exponentialRampToValueAtTime(0.01, now + 0.35);
+      osc.start(now);
+      osc.stop(now + 0.35);
+    } else if(type === 'build') {
+      playSingleDiceHit(now, 0.8);
+    } else if(type === 'win') {
+      const notes = [523.25, 659.25, 783.99, 1046.50];
+      notes.forEach((freq, idx) => {
+        const o = audioCtx.createOscillator();
+        const g = audioCtx.createGain();
+        o.connect(g);
+        g.connect(audioCtx.destination);
+        o.type = 'triangle';
+        o.frequency.setValueAtTime(freq, now + idx * 0.12);
+        g.gain.setValueAtTime(0.2, now + idx * 0.12);
+        g.gain.exponentialRampToValueAtTime(0.01, now + idx * 0.12 + 0.4);
+        o.start(now + idx * 0.12);
+        o.stop(now + idx * 0.12 + 0.4);
+      });
+    }
+  } catch(e) {}
+}
+
+function showToast(text) {
+  const container = $("toast-container");
+  const toast = document.createElement("div");
+  toast.className = "toast";
+  toast.innerHTML = text;
+  container.appendChild(toast);
+  setTimeout(() => toast.remove(), 3000);
+}
 
 $("server-ip").value = serverUrl;
 const savedName = localStorage.getItem("catan_name");
@@ -109,6 +332,7 @@ const api = async(p, b) => {
 };
 
 async function connectAndJoin() {
+    initAudio();
     const srv = getBaseUrl();
     const name = $("player-name").value.trim();
     if (!name) {
@@ -445,8 +669,18 @@ function road(a,b,m){
   return r;
 }
 
+let prevVownLen = 0;
+let prevEownLen = 0;
+
 const seen={};let firstDraw=true;
 function drawDyn(){if(!S)return;dynG.clear();markG.clear();const b=S.board,now=performance.now();
+  
+  if(S.vown.length > prevVownLen || S.eown.length > prevEownLen) {
+    if(!firstDraw) playSound('build');
+  }
+  prevVownLen = S.vown.length;
+  prevEownLen = S.eown.length;
+
   const born=key=>{if(seen[key]==null)seen[key]=firstDraw?-1:now;return seen[key]>=0?seen[key]:null};
   S.vown.forEach(o=>{const[x,z]=b.V[o.v];
     const g=bld(o.t,S.players[o.p].color.replace("#","0x")*1,x,z);
@@ -481,15 +715,53 @@ function drawDyn(){if(!S)return;dynG.clear();markG.clear();const b=S.board,now=p
     o.userData={t:k,id};markG.add(o)}))}
 
 /* ---------- Oberfläche ---------- */
-async function act(t,id,extra){const r=await api("/act",{token,type:t,id,...extra});if(r.error)alert(r.error)}
+async function act(t,id,extra){
+  if(t === 'roll') playSound('roll');
+  const r=await api("/act",{token,type:t,id,...extra});
+  if(r.error)alert(r.error)
+}
 function setMode(m){mode=m;drawDyn();drawUI()}
 function trade(){act("trade",null,{give:$("tg").value,get:$("tt").value})}
 const opts=sel=>Object.entries(NAMES).map(([k,v])=>`<option value="${k}"${k==sel?" selected":""}>${ICONS[k]} ${v}</option>`).join("");
+
+let victoryShown = false;
 
 function drawUI(){
   if(!S)return;
   const lob=S.phase=="lobby",mine=S.me!=null&&S.me===S.cur&&S.phase!="over";
   $("lobby").hidden=!lob;$("top").hidden=lob;$("bar").hidden=lob||S.me==null;
+  $("costs-box").hidden=lob||S.me==null;
+
+  // Prüfen auf neue Rohstoffe
+  if (S.res && prevRes) {
+    let gained = [];
+    Object.keys(NAMES).forEach(k => {
+      const diff = (S.res[k] || 0) - (prevRes[k] || 0);
+      if (diff > 0) {
+        gained.push(`+${diff} ${ICONS[k]} ${NAMES[k]}`);
+      }
+    });
+    if (gained.length > 0) {
+      showToast(`Erhalten: ${gained.join(", ")}`);
+      playSound('gain');
+    }
+  }
+  if (S.res) {
+    prevRes = { ...S.res };
+  }
+
+  // Sieger-Bildschirm Logik
+  if (S.phase === "over" && !victoryShown) {
+    victoryShown = true;
+    let winnerName = "Jemand";
+    if (S.players && S.players[S.cur]) {
+      winnerName = S.players[S.cur].name;
+    }
+    $("winner-display").innerText = `${winnerName} hat gewonnen!`;
+    $("victory-screen").hidden = false;
+    playSound('win');
+  }
+
   const list=S.players.map((p,i)=>{
     const cur=!lob&&i==S.cur&&S.phase!="over";
     return `<div class="p${cur?" cur":""}"><span class="dot" style="background:${p.color}"></span><span class="nm">${cur?"▶ ":""}${p.name}${i==S.me?" (du)":""}</span>${lob?"":`<span class="st">🏆 ${p.vp} SP · 🃏 ${p.cards}</span>`}</div>`;
