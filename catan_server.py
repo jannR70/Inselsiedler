@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Catan-Server: python catan_server.py [port]  ->  http://<deine-ip>:8000
-Unterstützt mehrere Räume (Lobbies / Spiele gleichzeitig) mit Raumcodes.
+Unterstützt mehrere Räume, Raumcodes und Entwicklungskarten.
 Liegt neben catan3d.html und liefert diese Datei auch aus. Keine Abhängigkeiten."""
 import json, math, os, random, secrets, socket, sys, threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -11,7 +11,12 @@ TILES = ["wood"] * 4 + ["wool"] * 4 + ["grain"] * 4 + ["brick"] * 3 + ["ore"] * 
 NUMS = [2, 3, 3, 4, 4, 5, 5, 6, 6, 8, 8, 9, 9, 10, 10, 11, 11, 12]
 COST = {"road": {"wood": 1, "brick": 1},
         "settlement": {"wood": 1, "brick": 1, "wool": 1, "grain": 1},
-        "city": {"grain": 2, "ore": 3}}
+        "city": {"grain": 2, "ore": 3},
+        "dev": {"wool": 1, "grain": 1, "ore": 1}}
+
+# Stapel für Entwicklungskarten: 14 Ritter, 5 Siegpunkte, 2 Erfindung, 2 Monopol, 2 Straßenbau
+DEV_DECK = ["knight"] * 14 + ["vp"] * 5 + ["invention"] * 2 + ["monopoly"] * 2 + ["road_building"] * 2
+
 COLORS = ["#e5484d", "#3b82f6", "#f5f5f5", "#f08a24"]
 WIN = 10
 lock = threading.Condition()
@@ -43,7 +48,6 @@ VADJ = {i: set() for i in range(len(V))}
 for a, b in E:
     VADJ[a].add(b); VADJ[b].add(a)
 
-# Dict von Raum-ID -> Spielzustand (G)
 GAMES = {}
 
 def create_game_state(room_id):
@@ -55,6 +59,8 @@ def create_game_state(room_id):
         if not any(hot(i) and hot(j) for i in range(19) for j in range(i)
                    if len(set(TH[i][2]) & set(TH[j][2])) == 2):
             break
+    
+    deck = DEV_DECK[:]; random.shuffle(deck)
     return {
         "room_id": room_id,
         "phase": "lobby", "players": [], "vown": {}, "eown": {}, "cur": 0,
@@ -62,6 +68,7 @@ def create_game_state(room_id):
         "last": None, "setup_i": 0, "seq": [], "ver": 0, "winner": None,
         "log": ["Warte auf Spieler …"],
         "robber": types.index("desert"),
+        "dev_deck": deck,
         "board": {"V": V, "E": E, "tiles": [{"type": types[i], "num": tn[i], "x": TH[i][0],
                  "y": TH[i][1], "v": TH[i][2]} for i in range(19)]}
     }
@@ -74,7 +81,11 @@ def say(g, m):
 
 # ---------- Regeln ----------
 def vp(g, pid):
-    return sum(1 if t == "s" else 2 for (o, t) in g["vown"].values() if o == pid)
+    p = g["players"][pid]
+    # Gebäude-Punkte + Siegpunkt-Entwicklungskarten
+    building_vp = sum(1 if t == "s" else 2 for (o, t) in g["vown"].values() if o == pid)
+    dev_vp = p["devs"].get("vp", 0) + p["played_devs"].get("vp", 0)
+    return building_vp + dev_vp
 
 def cards(p):
     return sum(p["res"].values())
@@ -139,7 +150,7 @@ def hint(g, pid):
         return "Du bist dran: würfle."
     if g["need_robber"]:
         return "Versetze den Räuber auf ein markiertes Feld."
-    return "Baue, tausche oder beende deinen Zug."
+    return "Baue, tausche, kaufe Entwicklungskarten oder beende deinen Zug."
 
 def distribute(g, n):
     for i, t in enumerate(g["board"]["tiles"]):
@@ -175,6 +186,66 @@ def act(g, pid, a):
         return "Nur der erste Spieler kann starten."
     if g["phase"] == "over" or pid != g["cur"]:
         return "Du bist nicht am Zug."
+    
+    # Entwicklungskarte kaufen
+    if t == "buy_dev":
+        if g["phase"] != "play" or not g["rolled"] or g["need_robber"]:
+            return "Jetzt nicht möglich."
+        if not afford(p, "dev"):
+            return "Nicht genug Rohstoffe (1x Wolle, Getreide, Erz)."
+        if not g["dev_deck"]:
+            return "Der Entwicklungskarten-Stapel ist leer."
+        pay(p, "dev")
+        card = g["dev_deck"].pop(0)
+        p["devs"][card] = p["devs"].get(card, 0) + 1
+        say(g, f"{p['name']} kauft eine Entwicklungskarte.")
+        if vp(g, pid) >= WIN:
+            g.update(phase="over", winner=pid); say(g, f"{p['name']} gewinnt mit {vp(g, pid)} Punkten!")
+        return None
+
+    # Entwicklungskarte spielen
+    if t == "play_dev":
+        card = a.get("card")
+        if g["phase"] != "play" or not g["rolled"]:
+            return "Jetzt nicht möglich."
+        if p["devs"].get(card, 0) <= 0:
+            return "Du hast diese Karte nicht."
+        
+        p["devs"][card] -= 1
+        if card == "knight":
+            p["played_devs"]["knight"] = p["played_devs"].get("knight", 0) + 1
+            g["need_robber"] = True
+            say(g, f"{p['name']} spielt einen Ritter! Versetze den Räuber.")
+        elif card == "vp":
+            p["played_devs"]["vp"] = p["played_devs"].get("vp", 0) + 1
+            say(g, f"{p['name']} deckt einen Siegpunkt auf!")
+        elif card == "monopoly":
+            res_type = a.get("res")
+            if res_type not in RES: return "Ungültiger Rohstoff."
+            total_stolen = 0
+            for idx, other in enumerate(g["players"]):
+                if idx == pid: continue
+                amount = other["res"][res_type]
+                other["res"][res_type] = 0
+                total_stolen += amount
+            p["res"][res_type] += total_stolen
+            say(g, f"{p['name']} spielt Monopol auf {res_type} und erhält {total_stolen} Karten.")
+        elif card == "invention":
+            r1, r2 = a.get("r1"), a.get("r2")
+            if r1 not in RES or r2 not in RES: return "Ungültige Rohstoffe."
+            p["res"][r1] += 1
+            p["res"][r2] += 1
+            say(g, f"{p['name']} nimmt sich per Erfindung 2 Rohstoffkarten.")
+        elif card == "road_building":
+            # Vereinfachung: Gibt dem Spieler direkt 2 Holz und 2 Lehm zum Bauen
+            p["res"]["wood"] += 2
+            p["res"]["brick"] += 2
+            say(g, f"{p['name']} baut Straßen (erhält 2 Holz & 2 Lehm).")
+
+        if vp(g, pid) >= WIN:
+            g.update(phase="over", winner=pid); say(g, f"{p['name']} gewinnt mit {vp(g, pid)} Punkten!")
+        return None
+
     i = a.get("id")
     if t in ("settlement", "road", "city", "robber"):
         if i not in legal(g, pid).get(t, []):
@@ -253,6 +324,7 @@ def snapshot(g, token):
          "eown": [{"e": e, "p": o} for e, o in g["eown"].items()]}
     if pid is not None:
         d["res"] = g["players"][pid]["res"]
+        d["devs"] = g["players"][pid]["devs"]
         if g["phase"] in ("setup", "play"):
             d["legal"] = legal(g, pid); d["hint"] = hint(g, pid)
     return d
@@ -329,7 +401,7 @@ class H(BaseHTTPRequestHandler):
 
                 tok = secrets.token_hex(8)
                 g["players"].append({"name": name, "token": tok, "color": COLORS[len(g["players"])],
-                                     "res": {k: 0 for k in RES}})
+                                     "res": {k: 0 for k in RES}, "devs": {}, "played_devs": {}})
                 say(g, f"{name} ist beigetreten."); bump(g)
                 return self.send(200, {"token": tok, "room_id": g["room_id"]})
             if self.path == "/act":
@@ -352,6 +424,6 @@ def local_ip():
 if __name__ == "__main__":
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8000
     srv = ThreadingHTTPServer(("0.0.0.0", port), H); srv.daemon_threads = True
-    print(f"Catan läuft mit Raumcode-System: http://localhost:{port} | im Netzwerk: http://{local_ip()}:{port}")
+    print(f"Catan läuft mit Entwicklungskarten: http://localhost:{port} | im Netzwerk: http://{local_ip()}:{port}")
     try: srv.serve_forever()
     except KeyboardInterrupt: pass
