@@ -52,7 +52,6 @@ h1{font:700 1.7rem Georgia,"Times New Roman",serif;margin:0 0 10px;letter-spacin
 .sep{width:1px;height:26px;background:var(--line)}
 :focus-visible{outline:2px solid var(--gold);outline-offset:2px}
 
-/* Neu hinzugefügte UI-Elemente */
 #costs-box {
   top: 12px;
   right: 12px;
@@ -169,7 +168,7 @@ h1{font:700 1.7rem Georgia,"Times New Roman",serif;margin:0 0 10px;letter-spacin
 </div>
 <div id="connect-screen" class="box">
   <h1>Catan 3D</h1>
-  <p style="color:var(--dim);font-size:.92rem;margin:0 0 6px">Wähle den Server und deinen Namen aus, um beizutreten.</p>
+  <p style="color:var(--dim);font-size:.92rem;margin:0 0 6px">Gib deinen Namen und optional einen Raumcode ein.</p>
   <div class="input-group">
     <label for="server-ip">Server IP &amp; Port</label>
     <input id="server-ip" type="text" placeholder="localhost:8000">
@@ -177,6 +176,10 @@ h1{font:700 1.7rem Georgia,"Times New Roman",serif;margin:0 0 10px;letter-spacin
   <div class="input-group">
     <label for="player-name">Dein Name</label>
     <input id="player-name" type="text" placeholder="Spielername" maxlength="16">
+  </div>
+  <div class="input-group">
+    <label for="room-code">Raumcode (optional)</label>
+    <input id="room-code" type="text" placeholder="z.B. A7K9 (leer = automatisch)" maxlength="8" style="text-transform:uppercase">
   </div>
   <button class="on" style="width:100%;margin-top:10px;padding:11px" onclick="connectAndJoin()">Verbinden &amp; Beitreten</button>
   <div id="connect-error" style="color:var(--red);margin-top:10px;font-size:.9rem;"></div>
@@ -193,9 +196,7 @@ let token = sessionStorage.getItem("ct") || "";
 let serverUrl = localStorage.getItem("catan_srv") || window.location.host || "localhost:8000";
 let S = null, mode = "road", ver = -1, built = false, pollingActive = false;
 let prevRes = null;
-let soundEnabled = true;
 
-// Audio-Synthesizer via Web Audio API
 const AudioContext = window.AudioContext || window.webkitAudioContext;
 let audioCtx = null;
 
@@ -205,50 +206,39 @@ function initAudio() {
 }
 document.addEventListener('pointerdown', initAudio, { once: true });
 
-// Einzelner realistischer Holz/Würfel-Klack
 function playSingleDiceHit(time, volume = 1.0) {
   if(!audioCtx) return;
   const now = time;
-  
-  // 1. Niederfrequenter Holzkörper-Impuls (Resonanz)
   const osc = audioCtx.createOscillator();
   const oscGain = audioCtx.createGain();
   osc.type = 'triangle';
   osc.frequency.setValueAtTime(140 + Math.random() * 60, now);
   osc.frequency.exponentialRampToValueAtTime(40, now + 0.03);
-  
   oscGain.gain.setValueAtTime(0.25 * volume, now);
   oscGain.gain.exponentialRampToValueAtTime(0.001, now + 0.035);
-  
   osc.connect(oscGain);
   oscGain.connect(audioCtx.destination);
   osc.start(now);
   osc.stop(now + 0.04);
 
-  // 2. Rausch-Klack (Aufprall-Geräusch)
   const bufferSize = audioCtx.sampleRate * 0.02;
   const noiseBuffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
   const output = noiseBuffer.getChannelData(0);
   for (let i = 0; i < bufferSize; i++) {
     output[i] = Math.random() * 2 - 1;
   }
-
   const noise = audioCtx.createBufferSource();
   noise.buffer = noiseBuffer;
-
   const filter = audioCtx.createBiquadFilter();
   filter.type = 'bandpass';
   filter.frequency.setValueAtTime(1200 + Math.random() * 800, now);
   filter.Q.setValueAtTime(3, now);
-
   const noiseGain = audioCtx.createGain();
   noiseGain.gain.setValueAtTime(0.35 * volume, now);
   noiseGain.gain.exponentialRampToValueAtTime(0.001, now + 0.02);
-
   noise.connect(filter);
   filter.connect(noiseGain);
   noiseGain.connect(audioCtx.destination);
-
   noise.start(now);
   noise.stop(now + 0.025);
 }
@@ -258,7 +248,6 @@ function playSound(type) {
   try {
     const now = audioCtx.currentTime;
     if(type === 'roll') {
-      // Simuliere mehrfaches Rollen & Aufprallen des Würfels auf dem Spielfeld
       const impacts = [0, 0.07, 0.15, 0.24, 0.34, 0.45, 0.58];
       impacts.forEach((delay, idx) => {
         const vol = Math.pow((impacts.length - idx) / impacts.length, 1.2);
@@ -335,6 +324,7 @@ async function connectAndJoin() {
     initAudio();
     const srv = getBaseUrl();
     const name = $("player-name").value.trim();
+    const roomCode = $("room-code").value.trim().toUpperCase();
     if (!name) {
         $("connect-error").innerText = "Bitte gib einen Namen ein.";
         return;
@@ -343,7 +333,7 @@ async function connectAndJoin() {
     localStorage.setItem("catan_name", name);
     serverUrl = srv;
 
-    const r = await api("/join", { name });
+    const r = await api("/join", { name, room_code: roomCode });
     if (r.error) {
         $("connect-error").innerText = r.error;
         return;
@@ -369,7 +359,6 @@ R.setPixelRatio(Math.min(devicePixelRatio||1,2));
 R.shadowMap.enabled=true;
 R.shadowMap.type=THREE.PCFSoftShadowMap;
 
-// Custom Stylized Shader für Hex-Spielfelder & Gebäude
 const HexShader = {
   uniforms: {
     baseColor: { value: new THREE.Color(0xffffff) },
@@ -404,7 +393,6 @@ const HexShader = {
   `
 };
 
-// Gradientenhimmel
 (function(){
   const c=document.createElement("canvas");c.width=4;c.height=512;const x=c.getContext("2d");
   const g=x.createLinearGradient(0,0,0,512);
@@ -425,7 +413,6 @@ const rimLight=new THREE.DirectionalLight(0x7fb7ff,.4);
 rimLight.position.set(-8,6,-8);
 sc.add(rimLight);
 
-// Sterne
 const starGeo=new THREE.BufferGeometry(),starCount=400,sp=new Float32Array(starCount*3);
 for(let i=0;i<starCount*3;i+=3){
   const a=Math.random()*Math.PI*2,r=40+Math.random()*30;
@@ -435,11 +422,9 @@ starGeo.setAttribute("position",new THREE.BufferAttribute(sp,3));
 const stars=new THREE.Points(starGeo,new THREE.PointsMaterial({color:0xffffff,size:.28,transparent:true,opacity:.7,fog:false}));
 sc.add(stars);
 
-// Ozean
 const sea=new THREE.Mesh(new THREE.CylinderGeometry(8.4,8.6,.2,64),new THREE.MeshStandardMaterial({color:0x1b6a92,roughness:.2,metalness:.3}));
 sea.position.y=-.15;sea.receiveShadow=true;sc.add(sea);
 
-// Wellen-Overlay
 const waveTex=(function(){
   const c=document.createElement("canvas");c.width=c.height=256;const x=c.getContext("2d");
   x.strokeStyle="rgba(255,255,255,.55)";x.lineWidth=2;x.lineCap="round";
@@ -452,7 +437,6 @@ const waveTex=(function(){
 const waves=new THREE.Mesh(new THREE.CircleGeometry(8.4,64),new THREE.MeshBasicMaterial({map:waveTex,transparent:true,opacity:.28,depthWrite:false}));
 waves.rotation.x=-Math.PI/2;waves.position.y=-.04;sc.add(waves);
 
-// Holz-Rahmen
 const rimGeo=new THREE.CylinderGeometry(7.55,7.8,.3,6);rimGeo.rotateY(Math.PI/6);
 const rim=new THREE.Mesh(rimGeo,new THREE.MeshStandardMaterial({color:0x4a2c17,roughness:.7}));
 rim.position.y=-.02;rim.castShadow=true;rim.receiveShadow=true;sc.add(rim);
@@ -462,11 +446,10 @@ rimTop.position.y=.135;sc.add(rimTop);
 
 const boardG=new THREE.Group(),dynG=new THREE.Group(),markG=new THREE.Group();sc.add(boardG,dynG,markG);
 const HG=new THREE.CylinderGeometry(.97,.97,.3,6),HB=new THREE.CylinderGeometry(1,1,.12,6),HT=new THREE.CylinderGeometry(.9,.9,.03,6);
-const CG=new THREE.CylinderGeometry(1,1,1,24),BX=new THREE.BoxGeometry(1,1,1),CN=new THREE.ConeGeometry(1,1,4),CN5=new THREE.ConeGeometry(1,1,5),CN8=new THREE.ConeGeometry(1,1,8),
+const CG=new THREE.CylinderGeometry(1,1,1,24),BX=new THREE.BoxGeometry(1,1,1),CN5=new THREE.ConeGeometry(1,1,5),CN8=new THREE.ConeGeometry(1,1,8),
       SP=new THREE.SphereGeometry(.14,14,14),HEMI=new THREE.SphereGeometry(1,16,10,0,Math.PI*2,0,Math.PI/2),PRISM=new THREE.CylinderGeometry(1,1,1,3);
 const mats={},fmats={};
 
-// Erzeuge ShaderMaterialien für bessere Optik
 const mat=c=>{
   if(!mats[c]){
     mats[c]=new THREE.ShaderMaterial({
@@ -503,14 +486,9 @@ const clock=new THREE.Clock();
   const t=clock.getElapsedTime(),now=performance.now();
   stars.rotation.y=t*.004;
   waveTex.offset.set(t*.012,t*.007);
-
-  // AUTOMATISCHE DREHUNG DEAKTIVIERT (Kamera bleibt fest)
-
-  // Marker pulsieren
   mkMat.opacity=.55+.35*Math.sin(t*4);
   const pulse=1+.18*Math.sin(t*4);
   markG.children.forEach(m=>{if(m.userData.t!=="road"&&m.userData.t!=="robber")m.scale.setScalar(pulse)});
-  // Bau-Animation
   dynG.children.forEach(o=>{
     const u=o.userData;if(u.born==null)return;
     const k=Math.min(1,(now-u.born)/500);
@@ -521,23 +499,17 @@ const clock=new THREE.Clock();
   R.render(sc,cam);
 })();
 
-// Verbesserte Zahlen-Textur (Präzise Lesbarkeit auf Wolle)
 function tokenTex(n){
   const c=document.createElement("canvas");c.width=c.height=256;const x=c.getContext("2d");
   x.clearRect(0,0,256,256);
-  
-  // Weißer, sauber abgegrenzter Hintergrund
   x.fillStyle="#ffffff";
   x.beginPath();x.arc(128,128,120,0,Math.PI*2);x.fill();
   x.lineWidth=8;x.strokeStyle="#2b1f17";x.stroke();
   x.lineWidth=2;x.strokeStyle="rgba(0,0,0,.15)";x.beginPath();x.arc(128,128,106,0,Math.PI*2);x.stroke();
-  
   const hot=(n==6||n==8);
   x.fillStyle=hot?"#d32f2f":"#111111";
   x.font="900 125px 'Segoe UI', Arial, sans-serif";x.textAlign="center";x.textBaseline="middle";
   x.fillText(n,128,110);
-  
-  // Punkte unter der Zahl
   const dots = 6 - Math.abs(7 - n);
   x.fillStyle = hot ? "#d32f2f" : "#444444";
   for(let i=0; i<dots; i++){
@@ -548,7 +520,6 @@ function tokenTex(n){
     x.arc(startX + i * spacing, 192, radius, 0, Math.PI * 2);
     x.fill();
   }
-  
   const t=new THREE.CanvasTexture(c);t.anisotropy=8;return t;
 }
 
@@ -556,7 +527,7 @@ function add(g,geo,m,sx,sy,sz,px,py,pz,ry){
   const o=new THREE.Mesh(geo,m);o.scale.set(sx,sy,sz);o.position.set(px,py,pz);if(ry)o.rotation.y=ry;g.add(o);return o;
 }
 
-const TOP=.315; // Oberkante der Hex-Felder
+const TOP=.315;
 function decorateTile(g,type){
   const ring=(n,r,off=0)=>Array.from({length:n},(_,i)=>{const a=off+i/n*Math.PI*2;return[Math.cos(a)*r,Math.sin(a)*r]});
   if(type==="wood"){
@@ -582,10 +553,8 @@ function decorateTile(g,type){
     add(g,BX,mat(0x6b2c18),.1,.07,.05,.45,TOP+.04,.45,.5);
     add(g,BX,mat(0x6b2c18),.1,.07,.05,-.5,TOP+.04,.4,-.3);
   }else if(type==="wool"){
-    // SCHAFWIESE: Flache Topografie & Positionierung weiter außen, damit die Zahlen-Disc perfekt lesbar bleibt
     add(g,HEMI,mat(0x73b839),.9,.08,.9,0,TOP,0);
     const wool=mat(0xfafafa),face=mat(0x2a2a2a);
-    // Schafe an die Ränder verschoben
     [[-.58,.4,.3],[.55,-.45,-.6],[.25,.65,.9],[-.55,-.45,1.7]].forEach(([sx,sz,ry])=>{
       const s=new THREE.Group();
       add(s,SP,wool,.7,.55,.9,0,.07,0);
@@ -593,7 +562,6 @@ function decorateTile(g,type){
       add(s,CG,face,.01,.04,.01,-.03,.01,.04);add(s,CG,face,.01,.04,.01,.03,.01,.04);
       s.position.set(sx,TOP+.04,sz);s.rotation.y=ry;g.add(s);
     });
-    // Zaun an den Rand gesetzt
     [[-.6,.55],[Math.cos(0)*.65,Math.sin(0)*.65]].forEach(([fx,fz])=>add(g,BX,mat(0x8b6b45),.02,.08,.02,fx,TOP+.04,fz));
   }else if(type==="grain"){
     const f1=mat(0xedc442),f2=mat(0xd6a82e);
@@ -647,8 +615,7 @@ function bld(t,col,x,z){
   const g=new THREE.Group(),m=mat(col),roofM=mat(shade(col,.45));
   if(t==="s"){
     add(g,BX,m,.3,.22,.3,0,.31+.11,0);
-    const r=add(g,PRISM,roofM,.24,.2,.34,0,.31+.22+.08,0);r.rotation.x=-Math.PI/2;r.rotation.z=Math.PI/2;
-    r.rotation.set(0,0,0);r.rotation.x=-Math.PI/2;
+    const r=add(g,PRISM,roofM,.24,.2,.34,0,.31+.22+.08,0);r.rotation.x=-Math.PI/2;
   }else{
     add(g,BX,m,.46,.22,.34,0,.31+.11,0);
     add(g,BX,m,.24,.46,.24,-.1,.31+.23,0);
@@ -671,10 +638,9 @@ function road(a,b,m){
 
 let prevVownLen = 0;
 let prevEownLen = 0;
-
 const seen={};let firstDraw=true;
+
 function drawDyn(){if(!S)return;dynG.clear();markG.clear();const b=S.board,now=performance.now();
-  
   if(S.vown.length > prevVownLen || S.eown.length > prevEownLen) {
     if(!firstDraw) playSound('build');
   }
@@ -714,7 +680,6 @@ function drawDyn(){if(!S)return;dynG.clear();markG.clear();const b=S.board,now=p
     else{const[x,z]=b.V[id];o=new THREE.Mesh(SP,mkMat);o.position.set(x,.55,z)}
     o.userData={t:k,id};markG.add(o)}))}
 
-/* ---------- Oberfläche ---------- */
 async function act(t,id,extra){
   if(t === 'roll') playSound('roll');
   const r=await api("/act",{token,type:t,id,...extra});
@@ -732,7 +697,6 @@ function drawUI(){
   $("lobby").hidden=!lob;$("top").hidden=lob;$("bar").hidden=lob||S.me==null;
   $("costs-box").hidden=lob||S.me==null;
 
-  // Prüfen auf neue Rohstoffe
   if (S.res && prevRes) {
     let gained = [];
     Object.keys(NAMES).forEach(k => {
@@ -750,7 +714,6 @@ function drawUI(){
     prevRes = { ...S.res };
   }
 
-  // Sieger-Bildschirm Logik
   if (S.phase === "over" && !victoryShown) {
     victoryShown = true;
     let winnerName = "Jemand";
@@ -766,10 +729,19 @@ function drawUI(){
     const cur=!lob&&i==S.cur&&S.phase!="over";
     return `<div class="p${cur?" cur":""}"><span class="dot" style="background:${p.color}"></span><span class="nm">${cur?"▶ ":""}${p.name}${i==S.me?" (du)":""}</span>${lob?"":`<span class="st">🏆 ${p.vp} SP · 🃏 ${p.cards}</span>`}</div>`;
   }).join("");
-  if(lob){$("lobby").innerHTML=`<h1>Catan 3D – Lobby</h1>`+list+(S.me==null?
-    `<p style="color:var(--dim)">Nicht verbunden. Bitte Seite neu laden.</p>`:
-    (S.me==0?`<p><button class="on" style="padding:11px 26px" onclick="act('start')">Spiel starten</button></p><p style="color:var(--dim);font-size:.88rem">Du bist der Gastgeber. Es sind 1 bis 4 Spieler möglich.</p>`:
-    `<p style="color:var(--dim)">Warte, bis der Gastgeber startet …</p>`));return}
+
+  if(lob){
+    $("lobby").innerHTML=`<h1>Catan 3D – Lobby</h1>
+      <div style="margin-bottom:12px;padding:8px 12px;background:rgba(246,195,67,0.1);border:1px solid rgba(246,195,67,0.3);border-radius:10px;font-size:.9rem;">
+        Raumcode: <b style="color:var(--gold);letter-spacing:1px;font-size:1.1rem;">${S.room_id}</b>
+        <div style="color:var(--dim);font-size:.78rem;margin-top:2px;">Teile diesen Code mit Freunden, damit sie beitreten können!</div>
+      </div>`+list+(S.me==null?
+      `<p style="color:var(--dim)">Nicht verbunden. Bitte Seite neu laden.</p>`:
+      (S.me==0?`<p><button class="on" style="padding:11px 26px" onclick="act('start')">Spiel starten</button></p><p style="color:var(--dim);font-size:.88rem">Du bist der Gastgeber. Es sind 1 bis 4 Spieler möglich.</p>`:
+      `<p style="color:var(--dim)">Warte, bis der Gastgeber startet …</p>`));
+    return;
+  }
+
   const faces="⚀⚁⚂⚃⚄⚅";
   $("top").innerHTML=`<h1>Catan 3D</h1>${list}<div class="hint">${S.hint||(S.phase=="over"?S.log.at(-1):"Du schaust zu.")}</div>
    ${S.dice?`<div class="dice"><span class="face">${faces[S.dice[0]-1]||""}</span><span class="face">${faces[S.dice[1]-1]||""}</span><span>= <b>${S.dice[0]+S.dice[1]}</b></span></div>`:""}
@@ -785,7 +757,6 @@ function drawUI(){
    <button onclick="act('end')">Zug beenden ⏭</button>`:"");
 }
 
-/* ---------- Verbindung ---------- */
 async function poll(){
   if (!pollingActive) return;
   const used = token;

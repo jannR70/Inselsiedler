@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Catan-Server: python catan_server.py [port]  ->  http://<deine-ip>:8000
-Unterstützt mehrere Räume (Lobbies / Spiele gleichzeitig).
+Unterstützt mehrere Räume (Lobbies / Spiele gleichzeitig) mit Raumcodes.
 Liegt neben catan3d.html und liefert diese Datei auch aus. Keine Abhängigkeiten."""
 import json, math, os, random, secrets, socket, sys, threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -65,15 +65,6 @@ def create_game_state(room_id):
         "board": {"V": V, "E": E, "tiles": [{"type": types[i], "num": tn[i], "x": TH[i][0],
                  "y": TH[i][1], "v": TH[i][2]} for i in range(19)]}
     }
-
-def get_open_game():
-    for g in GAMES.values():
-        if g["phase"] == "lobby" and len(g["players"]) < 4:
-            return g
-    new_id = f"Room-{len(GAMES) + 1}"
-    g = create_game_state(new_id)
-    GAMES[new_id] = g
-    return g
 
 def bump(g):
     g["ver"] += 1; lock.notify_all()
@@ -309,8 +300,33 @@ class H(BaseHTTPRequestHandler):
         with lock:
             if self.path == "/join":
                 name = str(a.get("name", "")).strip()[:16]
+                room_code = str(a.get("room_code", "")).strip().upper()
                 if not name: return self.send(200, {"error": "Bitte einen Namen eingeben."})
-                g = get_open_game()
+                
+                g = None
+                if room_code:
+                    if room_code in GAMES:
+                        g = GAMES[room_code]
+                        if g["phase"] != "lobby":
+                            return self.send(200, {"error": "Dieses Spiel hat bereits begonnen."})
+                        if len(g["players"]) >= 4:
+                            return self.send(200, {"error": "Dieser Raum ist bereits voll (max. 4 Spieler)."})
+                    else:
+                        g = create_game_state(room_code)
+                        GAMES[room_code] = g
+                else:
+                    for cand in GAMES.values():
+                        if cand["phase"] == "lobby" and len(cand["players"]) < 4:
+                            g = cand
+                            break
+                    if not g:
+                        while True:
+                            room_code = "".join(random.choices("ABCDEFGHJKLMNPQRSTUVWXYZ23456789", k=4))
+                            if room_code not in GAMES:
+                                break
+                        g = create_game_state(room_code)
+                        GAMES[room_code] = g
+
                 tok = secrets.token_hex(8)
                 g["players"].append({"name": name, "token": tok, "color": COLORS[len(g["players"])],
                                      "res": {k: 0 for k in RES}})
@@ -335,8 +351,7 @@ def local_ip():
 
 if __name__ == "__main__":
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8000
-    get_open_game()
     srv = ThreadingHTTPServer(("0.0.0.0", port), H); srv.daemon_threads = True
-    print(f"Catan läuft mit Multi-Lobby System: http://localhost:{port} | im Netzwerk: http://{local_ip()}:{port}")
+    print(f"Catan läuft mit Raumcode-System: http://localhost:{port} | im Netzwerk: http://{local_ip()}:{port}")
     try: srv.serve_forever()
     except KeyboardInterrupt: pass
