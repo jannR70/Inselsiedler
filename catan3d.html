@@ -10,6 +10,7 @@
   --line:rgba(255,255,255,.12);--text:#eef3f0;--dim:#9fb8c3;--gold:#f6c343;--gold2:#e39b1b;--red:#e5484d;
 }
 *{box-sizing:border-box}
+[hidden]{display:none!important}
 body{margin:0;overflow:hidden;background:var(--bg);color:var(--text);font:15px/1.45 "Segoe UI",system-ui,-apple-system,sans-serif}
 canvas{display:block;width:100vw;height:100vh;touch-action:none;cursor:grab}
 canvas:active{cursor:grabbing}
@@ -153,6 +154,24 @@ h1{font:700 1.7rem Georgia,"Times New Roman",serif;margin:0 0 10px;letter-spacin
   font-size: 2.2rem;
   margin-bottom: 15px;
 }
+button:disabled{opacity:.4;cursor:not-allowed;transform:none;border-color:var(--line);background:rgba(255,255,255,.05)}
+.timer{color:var(--dim);font-size:.85rem;margin-bottom:6px}
+.timer b{color:var(--text);font-variant-numeric:tabular-nums}
+#offer-box{bottom:82px;left:50%;transform:translateX(-50%);z-index:900;text-align:center;max-width:calc(100vw - 24px);border:1px solid var(--gold)}
+#offer-box button{margin:8px 4px 0}
+#trade-modal{top:50%;left:50%;transform:translate(-50%,-50%);width:min(430px,calc(100vw - 30px));z-index:2500;padding:22px;border:2px solid var(--gold);background:linear-gradient(180deg,rgba(20,45,60,.98),rgba(8,20,30,.98))}
+#trade-modal h2{color:var(--gold);margin:0 0 10px;font-size:1.25rem}
+#trade-modal h3{margin:12px 0 6px;font-size:.95rem;color:var(--dim)}
+.trrow{display:flex;gap:6px;flex-wrap:wrap}
+.tr{display:flex;flex-direction:column;align-items:center;gap:3px;font-size:1.1rem}
+.tr input{width:52px;text-align:center;padding:5px;cursor:text}
+#dice-overlay{position:fixed;top:38%;left:50%;transform:translate(-50%,-50%);z-index:1500;display:flex;gap:18px;align-items:center;pointer-events:none}
+#dice-overlay .die{width:92px;height:92px;line-height:92px;text-align:center;font-size:76px;background:#fff;color:#1a1a1a;border-radius:18px;box-shadow:0 10px 30px rgba(0,0,0,.5);animation:tumble .5s linear infinite}
+#dice-overlay.done .die{animation:land .35s ease-out}
+#dice-overlay #dsum{font-size:2.4rem;font-weight:800;color:var(--gold);text-shadow:0 2px 10px rgba(0,0,0,.6);min-width:2.2ch}
+#dice-overlay.fade{opacity:0;transition:opacity .5s}
+@keyframes tumble{0%{transform:translateY(-14px) rotate(0)}50%{transform:translateY(10px) rotate(180deg)}100%{transform:translateY(-14px) rotate(360deg)}}
+@keyframes land{0%{transform:scale(1.35) rotate(25deg)}100%{transform:scale(1) rotate(0)}}
 .winner-name {
   font-size: 1.5rem;
   font-weight: bold;
@@ -184,6 +203,10 @@ h1{font:700 1.7rem Georgia,"Times New Roman",serif;margin:0 0 10px;letter-spacin
     <div class="cost-res">🌾🌾 Getreide + ⛏️⛏️⛏️ Erz</div>
   </div>
   <div class="cost-item">
+    <div class="cost-title">🛣️ Längste Handelsstraße</div>
+    <div class="cost-res">Ab 5 zusammenhängenden Straßen · +2 SP</div>
+  </div>
+  <div class="cost-item">
     <div class="cost-title">🃏 Entwicklungskarte</div>
     <div class="cost-res">🐑 Wolle + 🌾 Getreide + ⛏️ Erz</div>
   </div>
@@ -201,6 +224,17 @@ h1{font:700 1.7rem Georgia,"Times New Roman",serif;margin:0 0 10px;letter-spacin
 </div>
 
 <div id="toast-container"></div>
+<div id="dice-overlay" hidden><span class="die" id="d1"></span><span class="die" id="d2"></span><span id="dsum"></span></div>
+<div id="offer-box" class="box" hidden></div>
+<div id="trade-modal" class="box" hidden>
+  <h2>🤝 Handelsangebot an alle Mitspieler</h2>
+  <h3>Ich gebe:</h3><div class="trrow" id="tm-give"></div>
+  <h3>Ich möchte:</h3><div class="trrow" id="tm-get"></div>
+  <div style="display:flex;gap:8px;margin-top:16px">
+    <button class="on" style="flex:1" onclick="sendOffer()">Angebot senden</button>
+    <button style="flex:1" onclick="$('trade-modal').hidden=true">Abbrechen</button>
+  </div>
+</div>
 <div id="victory-screen" class="box" hidden>
   <h1>🏆 Sieg! 🏆</h1>
   <p style="color:var(--dim)">Das Spiel ist zu Ende!</p>
@@ -723,9 +757,56 @@ function drawDyn(){if(!S)return;dynG.clear();markG.clear();const b=S.board,now=p
     o.userData={t:k,id};markG.add(o)}))}
 
 async function act(t,id,extra){
-  if(t === 'roll') playSound('roll');
   const r=await api("/act",{token,type:t,id,...extra});
-  if(r.error)alert(r.error)
+  if(r.error)alert(r.error);
+  return r;
+}
+
+/* ---------- Handel ---------- */
+function buildTradeModal(){
+  const row=pre=>Object.keys(NAMES).map(k=>`<label class="tr" title="${NAMES[k]}">${ICONS[k]}<input type="number" min="0" max="19" value="0" id="${pre}_${k}"></label>`).join("");
+  $("tm-give").innerHTML=row("g");$("tm-get").innerHTML=row("w");
+}
+buildTradeModal();
+function openTrade(){Object.keys(NAMES).forEach(k=>{$("g_"+k).value=0;$("w_"+k).value=0});$("trade-modal").hidden=false}
+async function sendOffer(){
+  const give={},get={};
+  Object.keys(NAMES).forEach(k=>{give[k]=+$("g_"+k).value||0;get[k]=+$("w_"+k).value||0});
+  const r=await act("offer",null,{give,get});
+  if(r&&!r.error)$("trade-modal").hidden=true;
+}
+
+/* ---------- Spielzeit ---------- */
+let snapAt=0;
+function fmtTime(){
+  if(!S||S.elapsed==null)return "00:00";
+  let s=Math.floor(S.elapsed+(S.phase==="over"?0:(performance.now()-snapAt)/1000));
+  const h=Math.floor(s/3600),m=Math.floor(s%3600/60),sec=s%60,p=n=>String(n).padStart(2,"0");
+  return (h?h+":":"")+p(m)+":"+p(sec);
+}
+setInterval(()=>{const el=$("timer");if(el)el.textContent=fmtTime()},1000);
+
+/* ---------- Würfelanimation ---------- */
+let lastRoll=null,rolling=false;
+const FACES="⚀⚁⚂⚃⚄⚅";
+function checkRoll(){
+  if(S.roll_id==null)return;
+  if(lastRoll===null){lastRoll=S.roll_id;return}
+  if(S.roll_id!==lastRoll&&S.dice){lastRoll=S.roll_id;animateDice(S.dice)}
+}
+function animateDice(d){
+  rolling=true;
+  const ov=$("dice-overlay"),a=$("d1"),b=$("d2"),sum=$("dsum");
+  ov.className="";ov.hidden=false;sum.textContent="";
+  playSound('roll');
+  const rnd=()=>FACES[Math.floor(Math.random()*6)];
+  const iv=setInterval(()=>{a.textContent=rnd();b.textContent=rnd()},80);
+  setTimeout(()=>{
+    clearInterval(iv);
+    a.textContent=FACES[d[0]-1];b.textContent=FACES[d[1]-1];sum.textContent="= "+(d[0]+d[1]);
+    ov.className="done";
+    setTimeout(()=>{ov.className="fade";setTimeout(()=>{ov.hidden=true;ov.className="";rolling=false;drawUI()},500)},1400);
+  },1000);
 }
 function setMode(m){mode=m;drawDyn();drawUI()}
 function trade(){act("trade",null,{give:$("tg").value,get:$("tt").value})}
@@ -773,8 +854,9 @@ function drawUI(){
   if (S.phase === "over" && !victoryShown) {
     victoryShown = true;
     let winnerName = "Jemand";
-    if (S.players && S.players[S.cur]) {
-      winnerName = S.players[S.cur].name;
+    const wi = S.winner != null ? S.winner : S.cur;
+    if (S.players && S.players[wi]) {
+      winnerName = S.players[wi].name;
     }
     $("winner-display").innerText = `${winnerName} hat gewonnen!`;
     $("victory-screen").hidden = false;
@@ -783,7 +865,7 @@ function drawUI(){
 
   const list=S.players.map((p,i)=>{
     const cur=!lob&&i==S.cur&&S.phase!="over";
-    return `<div class="p${cur?" cur":""}"><span class="dot" style="background:${p.color}"></span><span class="nm">${cur?"▶ ":""}${p.name}${i==S.me?" (du)":""}</span>${lob?"":`<span class="st">🏆 ${p.vp} SP · 🃏 ${p.cards}</span>`}</div>`;
+    return `<div class="p${cur?" cur":""}"><span class="dot" style="background:${p.color}"></span><span class="nm">${cur?"▶ ":""}${p.name}${i==S.me?" (du)":""}</span>${lob?"":`<span class="st">🏆 ${p.vp} SP · 🃏 ${p.cards} · 🛣️ ${p.road||0}${S.longest_owner===i?" 👑":""}</span>`}</div>`;
   }).join("");
 
   if(lob){
@@ -807,20 +889,36 @@ function drawUI(){
       `</div>`;
   }
 
-  $("top").innerHTML=`<h1>Catan 3D <button style="padding:2px 6px;font-size:0.75rem;float:right;" onclick="$('dev-info-modal').hidden=false" title="Erklärungen zu den Karten">❓ Karten-Info</button></h1>${list}<div class="hint">${S.hint||(S.phase=="over"?S.log.at(-1):"Du schaust zu.")}</div>
-   ${S.dice?`<div class="dice"><span class="face">${faces[S.dice[0]-1]||""}</span><span class="face">${faces[S.dice[1]-1]||""}</span><span>= <b>${S.dice[0]+S.dice[1]}</b></span></div>`:""}
+  $("top").innerHTML=`<h1>Catan 3D <button style="padding:2px 6px;font-size:0.75rem;float:right;" onclick="$('dev-info-modal').hidden=false" title="Erklärungen zu den Karten">❓ Karten-Info</button></h1><div class="timer">⏱️ Spielzeit <b id="timer">${fmtTime()}</b></div>${list}<div class="hint">${S.hint||(S.phase=="over"?S.log.at(-1):"Du schaust zu.")}</div>
+   ${S.dice&&!rolling?`<div class="dice"><span class="face">${faces[S.dice[0]-1]||""}</span><span class="face">${faces[S.dice[1]-1]||""}</span><span>= <b>${S.dice[0]+S.dice[1]}</b></span></div>`:""}
    ${devHtml}
    <div class="log">${S.log.slice().reverse().join("<br>")}</div>
    <div class="help">Ziehen = drehen · Mausrad = zoomen · gelbe Punkte anklicken = bauen</div>`;
 
   if(S.me==null)return;
   const play=S.phase=="play"&&mine,free=play&&S.rolled&&!S.need_robber,L=S.legal||{};
+  const canDev=(S.res.wool>=1&&S.res.grain>=1&&S.res.ore>=1&&S.dev_left>0);
+
+  const o=S.offer,ob=$("offer-box");
+  if(!o||S.phase!=="play"){ob.hidden=true}else{
+    const fmt=b=>Object.entries(b).map(([k,n])=>`${n}× ${ICONS[k]} ${NAMES[k]}`).join(", ");
+    const from=S.players[o.from].name;
+    let h;
+    if(S.me===o.from) h=`<b>Dein Angebot:</b> ${fmt(o.give)} gegen ${fmt(o.get)}<div style="color:var(--dim);font-size:.85rem">Warte auf Antworten … (${o.declined.length} abgelehnt)</div><button onclick="act('cancel_offer')">Zurückziehen</button>`;
+    else if(o.declined.includes(S.me)) h=`<b>${from}</b> bietet ${fmt(o.give)} gegen ${fmt(o.get)}<div style="color:var(--dim)">Du hast abgelehnt.</div>`;
+    else{
+      const can=Object.entries(o.get).every(([k,n])=>(S.res[k]||0)>=n);
+      h=`<b>${from}</b> bietet ${fmt(o.give)} gegen ${fmt(o.get)}<br><button class="on" ${can?"":"disabled title='Dir fehlen Rohstoffe'"} onclick="act('accept_offer')">Annehmen</button><button onclick="act('decline_offer')">Ablehnen</button>`;
+    }
+    ob.innerHTML=h;ob.hidden=false;
+  }
   
   $("bar").innerHTML=Object.keys(NAMES).map(k=>`<span class="chip${S.res[k]?"":" zero"}"><span class="ic">${ICONS[k]}</span>${NAMES[k]} <b>${S.res[k]}</b></span>`).join("")+
    (play||free?`<span class="sep"></span>`:"")+
    (play&&!S.rolled?`<button class="on" onclick="act('roll')">🎲 Würfeln</button>`:"")+
    (free?[["road","🛤️ Straße"],["settlement","🏠 Siedlung"],["city","🏰 Stadt"]].map(([k,n])=>`<button class="${mode==k?"on":""}" onclick="setMode('${k}')" ${L[k]&&L[k].length?"":"title='Nicht genug Rohstoffe oder kein Platz' style='opacity:.55'"}>${n}${L[k]&&L[k].length?"":" ✗"}</button>`).join("")+
-   `<button onclick="act('buy_dev')">🃏 Karte kaufen</button>`:``)+
+   `<button onclick="act('buy_dev')" ${canDev?"":"disabled title='Du brauchst 1× Wolle, 1× Getreide und 1× Erz'"}>🃏 Karte kaufen</button>`+
+   (S.players.length>1?`<button onclick="openTrade()">🤝 Handeln</button>`:""):``)+
    (free?` <span class="chip">4 <select id="tg">${opts("wood")}</select> → 1 <select id="tt">${opts("ore")}</select> <button onclick="trade()">Tauschen</button></span>
    <button onclick="act('end')">Zug beenden ⏭</button>`:"");
 }
@@ -833,6 +931,8 @@ async function poll(){
     const r = await fetch(`${currentSrv}/state?v=${ver}&t=${used}`);
     S = await r.json();
     ver = S.ver;
+    snapAt = performance.now();
+    if (S.roll_id != null) checkRoll();
     if (used && S.me == null) {
       token = "";
       sessionStorage.removeItem("ct");

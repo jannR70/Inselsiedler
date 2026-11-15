@@ -2,7 +2,7 @@
 """Catan-Server: python catan_server.py [port]  ->  http://<deine-ip>:8000
 Unterstützt mehrere Räume, Raumcodes und Entwicklungskarten.
 Liegt neben catan3d.html und liefert diese Datei auch aus. Keine Abhängigkeiten."""
-import json, math, os, random, secrets, socket, sys, threading
+import json, math, os, random, secrets, socket, sys, threading, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
@@ -17,7 +17,7 @@ COST = {"road": {"wood": 1, "brick": 1},
 # Stapel für Entwicklungskarten: 14 Ritter, 5 Siegpunkte, 2 Erfindung, 2 Monopol, 2 Straßenbau
 DEV_DECK = ["knight"] * 14 + ["vp"] * 5 + ["invention"] * 2 + ["monopoly"] * 2 + ["road_building"] * 2
 
-COLORS = ["#e5484d", "#3b82f6", "#f5f5f5", "#f08a24"]
+COLORS = ["#e5484d", "#3b82f6", "#a855f7", "#f08a24"]
 WIN = 10
 lock = threading.Condition()
 
@@ -66,6 +66,8 @@ def create_game_state(room_id):
         "phase": "lobby", "players": [], "vown": {}, "eown": {}, "cur": 0,
         "rolled": False, "dice": None, "need_robber": False, "stage": "settlement",
         "last": None, "setup_i": 0, "seq": [], "ver": 0, "winner": None,
+        "offer": None, "longest_owner": None, "road_len": [], "roll_id": 0,
+        "started_at": None, "ended_at": None,
         "log": ["Warte auf Spieler …"],
         "robber": types.index("desert"),
         "dev_deck": deck,
@@ -74,18 +76,81 @@ def create_game_state(room_id):
     }
 
 def bump(g):
+    if g["phase"] == "over" and not g["ended_at"]:
+        g["ended_at"] = time.time()
     g["ver"] += 1; lock.notify_all()
 
 def say(g, m):
     g["log"].append(m); g["log"] = g["log"][-30:]
 
 # ---------- Regeln ----------
-def vp(g, pid):
+def vp(g, pid, total=True):
+    """total=False: nur sichtbare Punkte (ohne versteckte Siegpunktkarten)."""
     p = g["players"][pid]
-    # Gebäude-Punkte + Siegpunkt-Entwicklungskarten
-    building_vp = sum(1 if t == "s" else 2 for (o, t) in g["vown"].values() if o == pid)
-    dev_vp = p["devs"].get("vp", 0) + p["played_devs"].get("vp", 0)
-    return building_vp + dev_vp
+    pts = sum(1 if t == "s" else 2 for (o, t) in g["vown"].values() if o == pid)
+    if g["longest_owner"] == pid:
+        pts += 2
+    if total:
+        pts += p["devs"].get("vp", 0)
+    return pts
+
+def longest_road(g, pid):
+    adj = {}
+    for e, o in g["eown"].items():
+        if o == pid:
+            a, b = E[e]
+            adj.setdefault(a, []).append((e, b)); adj.setdefault(b, []).append((e, a))
+    def blocked(v):
+        o = g["vown"].get(v)
+        return bool(o and o[0] != pid)
+    def dfs(v, used):
+        best = len(used)
+        for e, w in adj.get(v, []):
+            if e in used:
+                continue
+            used.add(e)
+            best = max(best, len(used) if blocked(w) else dfs(w, used))
+            used.discard(e)
+        return best
+    return max((dfs(v, set()) for v in adj), default=0)
+
+def update_longest(g):
+    lens = [longest_road(g, i) for i in range(len(g["players"]))]
+    g["road_len"] = lens
+    holder, best = g["longest_owner"], max(lens, default=0)
+    new = None
+    if best >= 5:
+        top = [i for i, l in enumerate(lens) if l == best]
+        new = holder if holder in top else (top[0] if len(top) == 1 else None)
+    if new != holder:
+        g["longest_owner"] = new
+        if new is not None:
+            say(g, f"{g['players'][new]['name']} hat die Längste Handelsstraße ({best} Straßen)!")
+        else:
+            say(g, "Die Längste Handelsstraße geht an niemanden.")
+
+def bundle(b):
+    if not isinstance(b, dict):
+        return None
+    out = {}
+    for k, n in b.items():
+        if k not in RES:
+            return None
+        try:
+            n = int(n)
+        except (TypeError, ValueError):
+            return None
+        if n < 0 or n > 19:
+            return None
+        if n:
+            out[k] = n
+    return out
+
+def has(p, b):
+    return all(p["res"][k] >= n for k, n in b.items())
+
+def names(b):
+    return ", ".join(f"{n}x {k}" for k, n in b.items())
 
 def cards(p):
     return sum(p["res"].values())
@@ -176,6 +241,7 @@ def start(g):
     n = len(g["players"])
     g.update(phase="setup", seq=list(range(n)) + list(range(n))[::-1], setup_i=0, stage="settlement")
     g["cur"] = g["seq"][0]
+    g["started_at"] = time.time()
     say(g, "Das Spiel beginnt. Reihum je zwei Siedlungen mit Straße.")
 
 def act(g, pid, a):
@@ -184,8 +250,53 @@ def act(g, pid, a):
         if t == "start" and pid == 0:
             return start(g)
         return "Nur der erste Spieler kann starten."
+    # Antworten auf Handelsangebote: jeder Mitspieler darf antworten
+    if t in ("accept_offer", "decline_offer"):
+        o = g.get("offer")
+        if g["phase"] != "play" or not o or pid == o["from"]:
+            return "Es gibt kein Angebot für dich."
+        giver = g["players"][o["from"]]
+        if t == "decline_offer":
+            if pid not in o["declined"]:
+                o["declined"].append(pid)
+            say(g, f"{p['name']} lehnt das Angebot ab.")
+            if len(o["declined"]) >= len(g["players"]) - 1:
+                g["offer"] = None
+                say(g, "Alle haben das Angebot abgelehnt.")
+            return None
+        if not has(p, o["get"]):
+            return "Dir fehlen die geforderten Rohstoffe."
+        if not has(giver, o["give"]):
+            return "Der Anbieter hat die Rohstoffe nicht mehr."
+        for k, n in o["give"].items():
+            giver["res"][k] -= n; p["res"][k] += n
+        for k, n in o["get"].items():
+            p["res"][k] -= n; giver["res"][k] += n
+        g["offer"] = None
+        say(g, f"{giver['name']} und {p['name']} haben gehandelt.")
+        return None
+
     if g["phase"] == "over" or pid != g["cur"]:
         return "Du bist nicht am Zug."
+
+    if t == "offer":
+        if g["phase"] != "play" or not g["rolled"] or g["need_robber"]:
+            return "Jetzt nicht möglich."
+        if len(g["players"]) < 2:
+            return "Du hast keine Handelspartner."
+        give, get = bundle(a.get("give")), bundle(a.get("get"))
+        if not give or not get:
+            return "Gib an, was du anbietest und was du willst."
+        if set(give) & set(get):
+            return "Derselbe Rohstoff kann nicht auf beiden Seiten stehen."
+        if not has(p, give):
+            return "Du hast die angebotenen Rohstoffe nicht."
+        g["offer"] = {"from": pid, "give": give, "get": get, "declined": []}
+        say(g, f"{p['name']} bietet {names(give)} gegen {names(get)}.")
+        return None
+    if t == "cancel_offer":
+        g["offer"] = None
+        return None
     
     # Entwicklungskarte kaufen
     if t == "buy_dev":
@@ -208,6 +319,8 @@ def act(g, pid, a):
         card = a.get("card")
         if g["phase"] != "play" or not g["rolled"]:
             return "Jetzt nicht möglich."
+        if card == "vp":
+            return "Siegpunktkarten werden automatisch angerechnet."
         if p["devs"].get(card, 0) <= 0:
             return "Du hast diese Karte nicht."
         
@@ -216,9 +329,6 @@ def act(g, pid, a):
             p["played_devs"]["knight"] = p["played_devs"].get("knight", 0) + 1
             g["need_robber"] = True
             say(g, f"{p['name']} spielt einen Ritter! Versetze den Räuber.")
-        elif card == "vp":
-            p["played_devs"]["vp"] = p["played_devs"].get("vp", 0) + 1
-            say(g, f"{p['name']} deckt einen Siegpunkt auf!")
         elif card == "monopoly":
             res_type = a.get("res")
             if res_type not in RES: return "Ungültiger Rohstoff."
@@ -273,13 +383,15 @@ def act(g, pid, a):
                     g["cur"] = g["seq"][g["setup_i"]]; g["stage"] = "settlement"
         else:
             g["robber"] = i; g["need_robber"] = False; steal(g, pid)
+        if t in ("settlement", "road"):
+            update_longest(g)
         if vp(g, pid) >= WIN:
             g.update(phase="over", winner=pid); say(g, f"{p['name']} gewinnt mit {vp(g, pid)} Punkten!")
     elif t == "roll":
         if g["phase"] != "play" or g["rolled"]:
             return "Du hast schon gewürfelt."
         d = [random.randint(1, 6), random.randint(1, 6)]; n = sum(d)
-        g["dice"] = d; g["rolled"] = True; say(g, f"{p['name']} würfelt {n}.")
+        g["dice"] = d; g["rolled"] = True; g["roll_id"] += 1; say(g, f"{p['name']} würfelt {n}.")
         if n == 7:
             for q in g["players"]:
                 c = cards(q)
@@ -293,7 +405,7 @@ def act(g, pid, a):
     elif t == "end":
         if g["phase"] != "play" or not g["rolled"] or g["need_robber"]:
             return "Erst würfeln und den Räuber versetzen."
-        g["cur"] = (g["cur"] + 1) % len(g["players"]); g["rolled"] = False
+        g["cur"] = (g["cur"] + 1) % len(g["players"]); g["rolled"] = False; g["offer"] = None
     elif t == "trade":
         give, get = a.get("give"), a.get("get")
         if g["phase"] != "play" or not g["rolled"] or g["need_robber"]:
@@ -318,13 +430,17 @@ def snapshot(g, token):
     d = {"ver": g["ver"], "phase": g["phase"], "me": pid, "board": g["board"], "robber": g["robber"],
          "cur": g["cur"], "rolled": g["rolled"], "need_robber": g["need_robber"], "dice": g["dice"],
          "win": WIN, "log": g["log"][-8:], "room_id": g["room_id"],
-         "players": [{"name": p["name"], "color": p["color"], "vp": vp(g, i), "cards": cards(p)}
+         "winner": g["winner"], "roll_id": g["roll_id"], "offer": g["offer"],
+         "longest_owner": g["longest_owner"], "dev_left": len(g["dev_deck"]),
+         "elapsed": (int((g["ended_at"] or time.time()) - g["started_at"]) if g["started_at"] else None),
+         "players": [{"name": p["name"], "color": p["color"], "vp": vp(g, i, False), "cards": cards(p),
+                      "road": g["road_len"][i] if i < len(g["road_len"]) else 0}
                      for i, p in enumerate(g["players"])],
          "vown": [{"v": v, "p": o[0], "t": o[1]} for v, o in g["vown"].items()],
          "eown": [{"e": e, "p": o} for e, o in g["eown"].items()]}
     if pid is not None:
         d["res"] = g["players"][pid]["res"]
-        d["devs"] = g["players"][pid]["devs"]
+        d["devs"] = {k: v for k, v in g["players"][pid]["devs"].items() if k != "vp"}
         if g["phase"] in ("setup", "play"):
             d["legal"] = legal(g, pid); d["hint"] = hint(g, pid)
     return d
